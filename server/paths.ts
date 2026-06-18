@@ -27,6 +27,11 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
     label: "OpenCode",
     sessionsDir: join(homedir(), ".local", "share", "opencode", "storage"),
   },
+  cursor: {
+    id: "cursor",
+    label: "Cursor",
+    sessionsDir: join(homedir(), ".cursor", "projects"),
+  },
 };
 
 export const CLAUDE_PROJECTS_DIR = AGENT_CONFIGS.claude.sessionsDir;
@@ -34,7 +39,7 @@ export const CLAUDE_PROJECTS_DIR = AGENT_CONFIGS.claude.sessionsDir;
 export const CACHE_DIR = join(here, "..", ".cache");
 
 export function isAgentKind(value: string | null | undefined): value is AgentKind {
-  return value === "claude" || value === "pi" || value === "opencode";
+  return value === "claude" || value === "pi" || value === "opencode" || value === "cursor";
 }
 
 export function getAgentConfig(agent: AgentKind): AgentConfig {
@@ -65,8 +70,19 @@ export function decodePiProjectSlug(slug: string): string {
   return parts.join("\\");
 }
 
+export function decodeCursorProjectSlug(slug: string): string {
+  // e.g. d-dev-ERP-SAP -> D:/dev/ERP-SAP (best-effort label)
+  const parts = slug.split("-");
+  if (parts.length >= 2 && /^[a-z]$/i.test(parts[0]!)) {
+    const drive = parts[0]!.toUpperCase();
+    return `${drive}:/${parts.slice(1).join("/")}`;
+  }
+  return slug.replace(/-/g, "/");
+}
+
 export function decodeProjectSlugForAgent(agent: AgentKind, slug: string): string {
   if (agent === "pi") return decodePiProjectSlug(slug);
+  if (agent === "cursor") return decodeCursorProjectSlug(slug);
   if (agent === "opencode") return slug;
   return decodeProjectSlug(slug);
 }

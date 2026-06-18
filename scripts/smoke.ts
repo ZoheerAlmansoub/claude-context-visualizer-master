@@ -8,7 +8,7 @@ if (!filePath) {
 }
 const rawAgent = process.argv[3] ?? "claude";
 if (!isAgentKind(rawAgent) || rawAgent === "opencode") {
-  console.error("agent must be claude or pi");
+  console.error("agent must be claude, pi, or cursor");
   process.exit(1);
 }
 const snap = await computeSnapshot(filePath, undefined, rawAgent);

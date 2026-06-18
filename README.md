@@ -1,44 +1,35 @@
-# Agent Context Visualizer
+# Agent Session Intelligence
 
-A small local web app that shows **what's filling the context window** of local
-agent sessions — system prompt vs. messages vs. tool calls vs. tool results vs.
-attachments — so you can see what to trim.
+A local web app for **agent session analysis**: context token breakdown, user message aggregation, AI-powered analysis, skill/rule extraction, and recurring problem detection.
 
-It reads existing session transcripts (read-only) and renders a per-session breakdown
-as a treemap, sunburst, or stacked bar, with a drill-down into the individual heaviest
-items.
+Supported transcript sources:
 
-Supported sources:
-
-- Claude Code: `~/.claude/projects/**/*.jsonl`
-- Pi: `~/.pi/agent/sessions/**/*.jsonl`
-- OpenCode: visible in the UI, but full snapshots are disabled when only
-  `~/.local/share/opencode/storage/session_diff/*.json` patch files are available.
+- **Claude Code:** `~/.claude/projects/**/*.jsonl`
+- **Pi:** `~/.pi/agent/sessions/**/*.jsonl`
+- **Cursor:** `~/.cursor/projects/*/agent-transcripts/*/*.jsonl`
+- **OpenCode:** listed in UI; full transcripts when `message/`/`part/` storage exists (otherwise shows availability message)
 
 ## Requirements
 
-- [Bun](https://bun.sh) — used for both the API server and the web build.
+- [Bun](https://bun.sh) — API server and web build
 
 ## Setup
 
 ```sh
 bun install
 cd web && bun install && cd ..
+cp .env.example .env   # optional: add LLM API keys for Analysis tab
 ```
 
 ## Run
 
-### Windows (recommended)
-
-Double-click [`start.bat`](start.bat) or run:
+### Windows
 
 ```powershell
 .\start.ps1
 ```
 
-This installs dependencies if needed, starts the API (port 5174) and the Vite
-dev server (port 5173), opens <http://localhost:5173>, and keeps both processes
-running until you press Ctrl+C.
+Starts API (port 5174) and Vite (port 5173). Open http://localhost:5173
 
 ### Bun CLI
 
@@ -46,31 +37,61 @@ running until you press Ctrl+C.
 bun run dev
 ```
 
-Starts the API (port 5174) and the Vite dev server (port 5173) — open
-<http://localhost:5173>. The dev server proxies `/api` to the backend.
+## Features
 
-To build the frontend for production: `bun run build:web` (outputs `web/dist`); run the
-API with `bun run start`.
+### Context (original)
 
-## How it works
+- Token breakdown: system, messages, tool calls, tool results, attachments
+- Treemap / sunburst / bar charts
+- Drill-down into heaviest items
 
-- The **headline total** comes straight from the `usage` field of the latest assistant
-  turn — ground truth from the API.
-- Messages, tool calls, tool results, and attachments are tokenized locally with
-  `js-tiktoken` (`cl100k_base`). Claude counts are calibrated toward Claude's BPE;
-  other agents use the local tokenizer directly. Counts are approximate; proportions
-  are accurate.
-- The **system prompt + tool schemas** can't be read from the transcript, so they're
-  shown as the residual: `realTotal − Σ(identified buckets)`.
-- If a session has been compacted, only content after the latest compaction boundary is
-  counted when the agent transcript exposes that boundary.
-- Snapshots are cached under `.cache/<agent>/<sessionId>.json`, keyed by the source
-  file's mtime; each session has a Refresh button to recompute.
+### Messages
+
+- Chronological user messages with turn numbers
+- Copy single message, all messages (markdown or plain)
+- Post-compaction filter
+
+### Analysis (requires LLM)
+
+Configure in `.env`:
+
+```
+NVIDIA_API_KEY=...
+NVIDIA_API_URL=https://integrate.api.nvidia.com/v1
+NVIDIA_TEXT_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+DEFAULT_LLM_PROVIDER=nvidia
+ANTHROPIC_API_KEY=...
+OPENAI_API_KEY=...
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+Analysis types: summarize, intent map, experience extract, session review.
+
+### Artifacts
+
+Generate Cursor **skills** (`SKILL.md`) and **rules** (`.mdc`) from session patterns. Copy or save to disk.
+
+### Insights
+
+- Session-level pattern detection (retry loops, tool errors, token waste)
+- Project-wide recurring patterns across recent sessions
+
+## API
+
+| Route | Description |
+|-------|-------------|
+| `GET /api/sessions/:id/transcript` | Full session transcript |
+| `GET /api/sessions/:id/user-messages` | Aggregated user messages |
+| `POST /api/sessions/:id/analyze` | LLM analysis |
+| `POST /api/sessions/:id/generate-artifacts` | Skills/rules generation |
+| `GET /api/sessions/:id/insights` | Session patterns |
+| `GET /api/insights/recurring?project=` | Cross-session patterns |
+| `GET /api/config/llm` | Provider config (no secrets) |
 
 ## Project layout
 
-- `server/` — Bun HTTP API: reads/parses JSONL, tokenizes, computes the snapshot.
-- `web/` — React + Vite frontend (ECharts for the visualizations).
+- `server/` — Bun HTTP API, transcript engine, LLM, insights
+- `web/` — React + Vite frontend
 
 ## License
 

@@ -12,6 +12,7 @@ import {
   type AgentKind,
 } from "./types.ts";
 import { realTotalFromUsage } from "./usage.ts";
+import { normalizeRecordsForAgent, type NormalizedRecord } from "./record-normalize.ts";
 
 // Leaf content and tool inputs are truncated to keep snapshot payloads bounded.
 const MAX_CONTENT_CHARS = 50_000;
@@ -264,120 +265,44 @@ function toolUseSummary(name: string, input: any): string {
   return name;
 }
 
-function piContentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return content == null ? "" : JSON.stringify(content);
-  return content
-    .map((block) => {
-      if (typeof block === "string") return block;
-      if (!block || typeof block !== "object") return "";
-      const b = block as any;
-      if (b.type === "text") return b.text ?? "";
-      if (b.type === "thinking") return b.thinking ?? "";
-      return JSON.stringify(b);
-    })
-    .join("\n");
-}
+type SnapshotAnchor = {
+  latestAssistantIdx: number;
+  usage: Record<string, unknown> | null;
+  model: string | null;
+  estimated: boolean;
+};
 
-function normalizePiUsage(usage: any): any {
-  if (!usage) return usage;
-  return {
-    ...usage,
-    input_tokens: usage.input ?? 0,
-    cache_creation_input_tokens: usage.cacheWrite ?? 0,
-    cache_read_input_tokens: usage.cacheRead ?? 0,
-    output_tokens: usage.output ?? 0,
-  };
-}
-
-function normalizePiContent(content: unknown): any[] {
-  if (typeof content === "string") return [{ type: "text", text: content }];
-  if (!Array.isArray(content)) return [];
-  return content.flatMap((block): any[] => {
-    if (typeof block === "string") return [{ type: "text", text: block }];
-    if (!block || typeof block !== "object") return [];
-    const b = block as any;
-    if (b.type === "text") return [{ type: "text", text: b.text ?? "" }];
-    if (b.type === "thinking") {
-      return [
-        {
-          type: "thinking",
-          thinking: b.thinking ?? "",
-          signature: b.thinkingSignature ?? "",
-        },
-      ];
+// Prefer the latest assistant turn whose usage reports a positive input-context
+// total. When transcripts omit usage (common for Cursor exports), fall back to
+// the last assistant message and estimate totals from local tokenization.
+function findSnapshotAnchor(records: NormalizedRecord[]): SnapshotAnchor {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const r = records[i]!;
+    if (r.type === "assistant" && r.message?.usage) {
+      const u = r.message.usage;
+      const total = realTotalFromUsage(u);
+      if (total > 0) {
+        return {
+          latestAssistantIdx: i,
+          usage: u,
+          model: r.message.model ?? null,
+          estimated: false,
+        };
+      }
     }
-    if (b.type === "toolCall") {
-      return [
-        {
-          type: "tool_use",
-          id: b.id,
-          name: b.name ?? "unknown",
-          input: b.arguments ?? {},
-        },
-      ];
+  }
+  for (let i = records.length - 1; i >= 0; i--) {
+    const r = records[i]!;
+    if (r.type === "assistant") {
+      return {
+        latestAssistantIdx: i,
+        usage: null,
+        model: r.message?.model ?? null,
+        estimated: true,
+      };
     }
-    return [{ type: "text", text: JSON.stringify(b) }];
-  });
-}
-
-function normalizePiRecords(records: any[]): any[] {
-  return records.flatMap((rec): any[] => {
-    if (rec?.type === "compaction") {
-      return [
-        {
-          type: "system",
-          subtype: "compact_boundary",
-          compactMetadata: {
-            preTokens: rec.tokensBefore ?? 0,
-            postTokens: 0,
-            trigger: rec.fromHook ? "hook" : "pi",
-          },
-        },
-      ];
-    }
-    if (rec?.type !== "message" || !rec?.message) return [];
-
-    const msg = rec.message;
-    if (msg.role === "user") {
-      return [{ type: "user", message: { content: normalizePiContent(msg.content) } }];
-    }
-    if (msg.role === "assistant") {
-      return [
-        {
-          type: "assistant",
-          message: {
-            content: normalizePiContent(msg.content),
-            model: msg.model ?? msg.responseModel ?? null,
-            usage: normalizePiUsage(msg.usage),
-          },
-        },
-      ];
-    }
-    if (msg.role === "toolResult") {
-      return [
-        {
-          type: "user",
-          message: {
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: msg.toolCallId,
-                content: piContentToText(msg.content),
-                is_error: Boolean(msg.isError),
-              },
-            ],
-          },
-        },
-      ];
-    }
-    return [];
-  });
-}
-
-function normalizeRecordsForAgent(agent: AgentKind, records: any[]): any[] {
-  if (agent === "pi") return normalizePiRecords(records);
-  return records;
+  }
+  return { latestAssistantIdx: -1, usage: null, model: null, estimated: true };
 }
 
 export async function computeSnapshot(
@@ -387,26 +312,11 @@ export async function computeSnapshot(
 ): Promise<Snapshot> {
   const mtimeMs = knownMtimeMs ?? (await stat(filePath)).mtimeMs;
   const sessionId = basename(filePath, ".jsonl");
-  const records = normalizeRecordsForAgent(agent, await readAllJSONL(filePath));
+  const records: NormalizedRecord[] = normalizeRecordsForAgent(agent, await readAllJSONL(filePath));
   const warnings: string[] = [];
 
-  // 1. Find latest assistant with usage (the anchor)
-  let latestAssistantIdx = -1;
-  let usage: any = null;
-  let model: string | null = null;
-  for (let i = records.length - 1; i >= 0; i--) {
-    const r = records[i];
-    if (r?.type === "assistant" && r?.message?.usage) {
-      const u = r.message.usage;
-      const total = realTotalFromUsage(u);
-      if (total > 0) {
-        latestAssistantIdx = i;
-        usage = u;
-        model = r.message.model ?? null;
-        break;
-      }
-    }
-  }
+  const anchor = findSnapshotAnchor(records);
+  const { latestAssistantIdx, usage, model, estimated } = anchor;
 
   // 2. Find compaction boundaries. Honor only the latest boundary that comes
   // BEFORE the anchor assistant message — boundaries after the anchor don't
@@ -432,9 +342,9 @@ export async function computeSnapshot(
     }
   }
   if (compaction) compaction.boundaryCount = boundaryCount;
+
   if (latestAssistantIdx === -1) {
-    // No usage found — return an empty snapshot
-    warnings.push("No assistant message with usage found.");
+    warnings.push("No assistant messages found.");
     return {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       agent,
@@ -446,7 +356,6 @@ export async function computeSnapshot(
         modelCap: modelCapFor(model),
         model: model ?? "unknown",
         inputTokens: 0,
-
         cacheCreationTokens: 0,
         cacheReadTokens: 0,
         outputTokens: 0,
@@ -457,16 +366,36 @@ export async function computeSnapshot(
     };
   }
 
-  const realTotal = realTotalFromUsage(usage);
-  const headline: Headline = {
-    realTotal,
-    modelCap: modelCapFor(model),
-    model: model ?? "unknown",
-    inputTokens: usage.input_tokens ?? usage.input ?? 0,
-    cacheCreationTokens: usage.cache_creation_input_tokens ?? usage.cacheWrite ?? 0,
-    cacheReadTokens: usage.cache_read_input_tokens ?? usage.cacheRead ?? 0,
-    outputTokens: usage.output_tokens ?? usage.output ?? 0,
-  };
+  if (estimated) {
+    warnings.push(
+      "No assistant message with API usage found. Token totals are estimated from local tokenization.",
+    );
+  }
+
+  const realTotalFromApi = usage ? realTotalFromUsage(usage) : 0;
+  const headline: Headline = estimated
+    ? {
+        realTotal: 0, // filled after bucket walk
+        modelCap: modelCapFor(model),
+        model: model ?? "unknown",
+        inputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        outputTokens: (usage?.output_tokens as number | undefined) ?? (usage?.output as number | undefined) ?? 0,
+      }
+    : {
+        realTotal: realTotalFromApi,
+        modelCap: modelCapFor(model),
+        model: model ?? "unknown",
+        inputTokens: (usage!.input_tokens as number | undefined) ?? (usage!.input as number | undefined) ?? 0,
+        cacheCreationTokens:
+          (usage!.cache_creation_input_tokens as number | undefined) ?? (usage!.cacheWrite as number | undefined) ?? 0,
+        cacheReadTokens:
+          (usage!.cache_read_input_tokens as number | undefined) ?? (usage!.cacheRead as number | undefined) ?? 0,
+        outputTokens: (usage!.output_tokens as number | undefined) ?? (usage!.output as number | undefined) ?? 0,
+      };
+
+  const realTotal = realTotalFromApi;
 
   // 3. Walk records from latestBoundary+1 up to (but not including) latestAssistantIdx.
   // The latest assistant's content is its OUTPUT (not in its input context).
@@ -683,7 +612,9 @@ export async function computeSnapshot(
   const identifiedSumRaw = idBuckets.reduce((sum, b) => sum + b.tokens, 0);
 
   let scale = 1;
-  if (identifiedSumRaw > realTotal && identifiedSumRaw > 0) {
+  let effectiveRealTotal = estimated ? identifiedSumRaw : realTotal;
+
+  if (!estimated && identifiedSumRaw > realTotal && identifiedSumRaw > 0) {
     scale = realTotal / identifiedSumRaw;
     warnings.push(
       `Identified buckets (${identifiedSumRaw.toLocaleString()}) exceed realTotal (${realTotal.toLocaleString()}). ` +
@@ -693,13 +624,18 @@ export async function computeSnapshot(
   }
 
   const identifiedSum = idBuckets.reduce((sum, b) => sum + b.tokens, 0);
-  const residual = Math.max(0, realTotal - identifiedSum);
+  if (estimated) {
+    effectiveRealTotal = identifiedSum;
+    headline.realTotal = identifiedSum;
+  }
+
+  const residual = estimated ? 0 : Math.max(0, effectiveRealTotal - identifiedSum);
 
   const systemBucket: Bucket = {
     id: "system",
     name: "System prompt + tool schemas",
     tokens: residual,
-    children: [
+    children: residual > 0 ? [
       {
         id: "system_residual",
         name: "System prompt + tool schemas (estimated)",
@@ -708,7 +644,7 @@ export async function computeSnapshot(
           {
             tokens: residual,
             turn: 0,
-            summary: `${agent === "claude" ? "Claude Code" : "Agent"} system prompt + tool-schema definitions + harness overhead`,
+            summary: `${agent === "claude" ? "Claude Code" : agent === "cursor" ? "Cursor" : agent === "pi" ? "Pi" : "Agent"} system prompt + tool-schema definitions + harness overhead`,
             fullContent:
               `This bucket is computed as a residual: realTotal − Σ(identified buckets).\n\n` +
               `It primarily reflects:\n` +
@@ -718,19 +654,19 @@ export async function computeSnapshot(
               `  • Per-message wrapper overhead (role markers, tool-call envelopes).\n\n` +
               `Token counts use cl100k_base${calibrationFactor === 1 ? "" : ` × ${calibrationFactor}`} calibration. ` +
               `Exact counts depend on the model provider's tokenizer.\n\n` +
-              `realTotal: ${realTotal}\n` +
+              `realTotal: ${effectiveRealTotal}\n` +
               `identifiedSum: ${identifiedSum}\n` +
               `residual: ${residual}\n` +
               (scale !== 1 ? `bucket scale: ${(scale * 100).toFixed(2)}%\n` : ""),
           },
         ],
       },
-    ],
+    ] : [],
   };
 
-  // Order: System, Messages, Tool calls, Tool results, Attachments
+  // Order: System (when residual > 0), Messages, Tool calls, Tool results, Attachments
   const buckets: Bucket[] = [
-    systemBucket,
+    ...(residual > 0 ? [systemBucket] : []),
     messagesBucket,
     toolCallsBucket,
     toolResultsBucket,

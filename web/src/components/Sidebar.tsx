@@ -8,11 +8,13 @@ type Props = {
   onSelect: (s: SessionListItem) => void;
   collapsed: boolean;
   onToggle: () => void;
+  onOpenLlmSettings: () => void;
 };
 
 const AGENTS: Array<{ id: AgentKind; label: string }> = [
   { id: "claude", label: "Claude" },
   { id: "pi", label: "Pi" },
+  { id: "cursor", label: "Cursor" },
   { id: "opencode", label: "OpenCode" },
 ];
 
@@ -37,7 +39,7 @@ function fmtDate(ms: number): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, onToggle }: Props) {
+export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, onToggle, onOpenLlmSettings }: Props) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [sessionsByProject, setSessionsByProject] = useState<Record<string, SessionListItem[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -93,7 +95,7 @@ export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, o
       <div className="sidebar-header">
         <div className="sidebar-brand">
           <span className="dot" />
-          <span className="brand-label">Context Visualizer</span>
+          <span className="brand-label">Session Intelligence</span>
           <button
             className="rail-toggle collapse"
             onClick={onToggle}
@@ -177,6 +179,11 @@ export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, o
           </div>
         );
       })}
+      <div className="sidebar-footer">
+        <button type="button" className="btn-secondary sidebar-llm-btn" onClick={onOpenLlmSettings}>
+          LLM settings
+        </button>
+      </div>
     </aside>
   );
 }

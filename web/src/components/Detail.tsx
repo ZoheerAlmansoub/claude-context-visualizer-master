@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { api, type AgentKind, type Snapshot, type SessionListItem, type LeafItem, type Bucket } from "../api";
 import { Chart, type ViewMode } from "./Chart";
 import { BUCKET_COLORS } from "../colors";
+import { SessionTabs, type DetailTab } from "./SessionTabs";
+import { MessagesPanel } from "./MessagesPanel";
+import { AnalysisPanel } from "./AnalysisPanel";
+import { ArtifactsPanel } from "./ArtifactsPanel";
+import { InsightsPanel } from "./InsightsPanel";
 
 type Props = { agent: AgentKind; session: SessionListItem };
 
@@ -41,6 +46,7 @@ function gatherOffenders(snap: Snapshot): OffenderRow[] {
 }
 
 export function Detail({ agent, session }: Props) {
+  const [tab, setTab] = useState<DetailTab>("context");
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<ViewMode>("treemap");
@@ -61,6 +67,7 @@ export function Detail({ agent, session }: Props) {
     fetcher.then(setSnap).catch((e) => alert(String(e))).finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, [agent, session.id]);
+  useEffect(() => { setTab("context"); }, [agent, session.id]);
 
   const allOffenders = useMemo(() => (snap ? gatherOffenders(snap) : []), [snap]);
 
@@ -134,7 +141,7 @@ export function Detail({ agent, session }: Props) {
             <span>
               Compaction at record #{snap.compaction.latestBoundaryAt} ({snap.compaction.trigger}):
               &nbsp;{fmt(snap.compaction.preTokens)} → {fmt(snap.compaction.postTokens)} tokens.
-              Only content after this boundary is counted.
+              Context breakdown counts only content after this boundary.
             </span>
           </div>
         )}
@@ -146,6 +153,17 @@ export function Detail({ agent, session }: Props) {
         )}
       </div>
 
+      <SessionTabs active={tab} onChange={setTab} />
+
+      {tab === "messages" && (
+        <MessagesPanel agent={agent} sessionId={session.id} />
+      )}
+      {tab === "analysis" && <AnalysisPanel agent={agent} sessionId={session.id} />}
+      {tab === "artifacts" && <ArtifactsPanel agent={agent} sessionId={session.id} />}
+      {tab === "insights" && <InsightsPanel agent={agent} session={session} />}
+
+      {tab === "context" && (
+        <>
       {/* ─── Breakdown ─── */}
       <div className="card">
         <h3 className="card-title">Breakdown</h3>
@@ -269,6 +287,8 @@ export function Detail({ agent, session }: Props) {
           </div>
         )}
       </div>
+        </>
+      )}
     </>
   );
 }
