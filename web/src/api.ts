@@ -103,6 +103,37 @@ export type AnalyzeResult = {
   cached: boolean;
   provider: LlmProviderKind;
   model: string;
+  locale?: "ar" | "en";
+  createdAt?: string;
+};
+
+export type AnalysisIndexEntry = {
+  analysisId: string;
+  type: AnalyzeType;
+  provider: LlmProviderKind;
+  model: string;
+  locale: "ar" | "en";
+  createdAt: string;
+  preview: string;
+  cached: true;
+};
+
+export type PromptImprovementResult = {
+  improvementId: string;
+  messageId: string;
+  turn: number;
+  originalText: string;
+  improvedPrompt: string;
+  rationale: string;
+  tips: string[];
+  issues: string[];
+  markdown: string;
+  tokensUsed?: number;
+  cached: boolean;
+  provider: LlmProviderKind;
+  model: string;
+  locale: "ar" | "en";
+  createdAt: string;
 };
 
 export type GeneratedArtifact = {
@@ -242,6 +273,28 @@ export const api = {
     post<AnalyzeResult>(
       `/api/sessions/${encodeURIComponent(sessionId)}/analyze?agent=${encodeURIComponent(agent)}`,
       body,
+    ),
+  listAnalyses: (agent: AgentKind, sessionId: string) =>
+    get<{ analyses: AnalysisIndexEntry[] }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/analyses?agent=${encodeURIComponent(agent)}`,
+    ),
+  getAnalysis: (agent: AgentKind, sessionId: string, analysisId: string) =>
+    get<AnalyzeResult>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/analyses/${encodeURIComponent(analysisId)}?agent=${encodeURIComponent(agent)}`,
+    ),
+  listPromptImprovements: (agent: AgentKind, sessionId: string) =>
+    get<{ improvements: PromptImprovementResult[] }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/prompt-improvements?agent=${encodeURIComponent(agent)}`,
+    ),
+  improvePrompt: (
+    agent: AgentKind,
+    sessionId: string,
+    messageId: string,
+    body?: { provider?: LlmProviderKind; model?: string; locale?: "ar" | "en"; force?: boolean },
+  ) =>
+    post<PromptImprovementResult>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/improve-prompt?agent=${encodeURIComponent(agent)}`,
+      body ?? {},
     ),
   generateArtifacts: (
     agent: AgentKind,

@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { Check, Copy, Download, Eye, EyeOff, Sparkles } from "lucide-react";
 import { api, copyText, type AgentKind, type GeneratedArtifact } from "../api";
+import { ActionButton } from "./ui/ActionButton";
 
 type Props = {
   agent: AgentKind;
@@ -41,9 +43,15 @@ export function ArtifactsPanel({ agent, sessionId }: Props) {
         <p className="panel-hint">
           Generate Cursor skills, rules, and tool hints from session experience.
         </p>
-        <button type="button" className="btn-primary" onClick={generate} disabled={loading}>
-          {loading ? "Generating…" : "Generate artifacts"}
-        </button>
+        <ActionButton
+          variant="primary"
+          icon={Sparkles}
+          loading={loading}
+          loadingLabel="Generating…"
+          onClick={generate}
+        >
+          Generate artifacts
+        </ActionButton>
       </div>
 
       <div className="artifact-save-path">
@@ -57,6 +65,13 @@ export function ArtifactsPanel({ agent, sessionId }: Props) {
           />
         </label>
       </div>
+
+      {loading && (
+        <div className="panel-loading">
+          <span className="improvement-loading-spinner" aria-hidden />
+          <span>Generating artifacts…</span>
+        </div>
+      )}
 
       {artifacts.length === 0 && !loading && (
         <div className="empty-panel">Click Generate to extract skills and rules.</div>
@@ -73,16 +88,14 @@ export function ArtifactsPanel({ agent, sessionId }: Props) {
             <p className="artifact-desc">{a.description}</p>
             <p className="artifact-trigger">Trigger: {a.trigger}</p>
             <div className="panel-actions">
-              <button
-                type="button"
-                className="btn-secondary"
+              <ActionButton
+                icon={expanded === a.name ? EyeOff : Eye}
                 onClick={() => setExpanded(expanded === a.name ? null : a.name)}
               >
                 {expanded === a.name ? "Hide" : "Preview"}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
+              </ActionButton>
+              <ActionButton
+                icon={copied === a.name ? Check : Copy}
                 onClick={() =>
                   copyText(a.rendered || a.content).then(() => {
                     setCopied(a.name);
@@ -91,10 +104,10 @@ export function ArtifactsPanel({ agent, sessionId }: Props) {
                 }
               >
                 {copied === a.name ? "Copied!" : "Copy"}
-              </button>
-              <button type="button" className="btn-secondary" onClick={() => save(a)}>
+              </ActionButton>
+              <ActionButton icon={Download} onClick={() => save(a)}>
                 Save
-              </button>
+              </ActionButton>
             </div>
             {expanded === a.name && (
               <pre className="artifact-preview">{a.rendered || a.content}</pre>

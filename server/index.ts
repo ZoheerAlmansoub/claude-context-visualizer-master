@@ -11,7 +11,8 @@ import {
   type LlmSettingsPatch,
 } from "./llm-config-store.ts";
 import { testLlmConnection } from "./llm/test-connection.ts";
-import { runAnalysis } from "./analysis.ts";
+import { runAnalysis, listSessionAnalyses, getSessionAnalysis } from "./analysis.ts";
+import { improveUserPrompt, listPromptImprovements } from "./prompt-improvement.ts";
 import { generateArtifacts } from "./artifacts/generator.ts";
 import { detectSessionPatterns, writeArtifactFile } from "./insights/pattern-detector.ts";
 import { getProjectInsights } from "./insights/indexer.ts";
@@ -162,6 +163,54 @@ const server = Bun.serve({
           provider: body.provider as LlmProviderKind | undefined,
           model: body.model as string | undefined,
           locale: (body.locale as "ar" | "en") ?? "en",
+        });
+        return json(result);
+      }
+
+      const analysesListMatch = path.match(/^\/api\/sessions\/([^/]+)\/analyses$/);
+      if (analysesListMatch && req.method === "GET") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const sessionId = analysesListMatch[1]!;
+        const analyses = await listSessionAnalyses(agent, sessionId);
+        return json({ analyses });
+      }
+
+      const analysisGetMatch = path.match(/^\/api\/sessions\/([^/]+)\/analyses\/([^/]+)$/);
+      if (analysisGetMatch && req.method === "GET") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const sessionId = analysisGetMatch[1]!;
+        const analysisId = analysisGetMatch[2]!;
+        const result = await getSessionAnalysis(agent, sessionId, analysisId);
+        if (!result) return notFound("analysis not found");
+        return json(result);
+      }
+
+      const improvementsListMatch = path.match(/^\/api\/sessions\/([^/]+)\/prompt-improvements$/);
+      if (improvementsListMatch && req.method === "GET") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const sessionId = improvementsListMatch[1]!;
+        const improvements = await listPromptImprovements(agent, sessionId);
+        return json({ improvements });
+      }
+
+      const improveMatch = path.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/improve-prompt$/);
+      if (improveMatch && req.method === "POST") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const sessionId = improveMatch[1]!;
+        const messageId = decodeURIComponent(improveMatch[2]!);
+        const filePath = await findSessionById(sessionId, agent);
+        if (!filePath) return notFound("session not found");
+        const body = await readJsonBody(req);
+        const transcript = await computeTranscript(filePath, agent, sessionId);
+        const result = await improveUserPrompt(transcript, messageId, {
+          provider: body.provider as LlmProviderKind | undefined,
+          model: body.model as string | undefined,
+          locale: (body.locale as "ar" | "en") ?? "en",
+          force: body.force === true,
         });
         return json(result);
       }

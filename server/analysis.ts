@@ -1,8 +1,14 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { CACHE_DIR } from "./paths.ts";
-import type { AnalyzeResult, AnalyzeType, LlmProviderKind, SessionTranscript } from "./types.ts";
+import type {
+  AnalysisIndexEntry,
+  AnalyzeResult,
+  AnalyzeType,
+  LlmProviderKind,
+  SessionTranscript,
+} from "./types.ts";
 import { buildAnalysisPrompt } from "./llm/prompts.ts";
 import { getProvider, resolveModel } from "./llm/router.ts";
 import { getLlmConfig } from "./config.ts";
@@ -81,9 +87,67 @@ export async function runAnalysis(
     cached: false,
     provider,
     model,
+    locale,
+    createdAt: new Date().toISOString(),
   };
 
   await mkdir(dir, { recursive: true });
   await writeFile(cachePath, JSON.stringify(result, null, 2), "utf8");
   return result;
+}
+
+export async function listSessionAnalyses(
+  agent: string,
+  sessionId: string,
+): Promise<AnalysisIndexEntry[]> {
+  const dir = analysisCacheDir(agent, sessionId);
+  try {
+    const files = await readdir(dir);
+    const entries: AnalysisIndexEntry[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const data = JSON.parse(await readFile(join(dir, file), "utf8")) as AnalyzeResult;
+        entries.push({
+          analysisId: data.analysisId,
+          type: data.type,
+          provider: data.provider,
+          model: data.model,
+          locale: data.locale ?? "en",
+          createdAt: data.createdAt ?? new Date(0).toISOString(),
+          preview: data.markdown.slice(0, 160).replace(/\s+/g, " ").trim(),
+          cached: true,
+        });
+      } catch {}
+    }
+    return entries.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function getSessionAnalysis(
+  agent: string,
+  sessionId: string,
+  analysisId: string,
+): Promise<AnalyzeResult | null> {
+  try {
+    const data = JSON.parse(
+      await readFile(join(analysisCacheDir(agent, sessionId), `${analysisId}.json`), "utf8"),
+    ) as AnalyzeResult;
+    return { ...data, cached: true };
+  } catch {
+    return null;
+  }
+}
+
+export async function findSessionAnalysis(
+  agent: string,
+  sessionId: string,
+  opts: { type: AnalyzeType; provider: LlmProviderKind; model: string; locale: "ar" | "en" },
+): Promise<AnalyzeResult | null> {
+  const key = cacheKey(opts.type, opts.provider, opts.model, opts.locale);
+  return getSessionAnalysis(agent, sessionId, key);
 }
