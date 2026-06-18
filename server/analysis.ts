@@ -22,8 +22,54 @@ function analysisCacheDir(agent: string, sessionId: string): string {
   return join(CACHE_DIR, "analysis", agent, sessionId);
 }
 
-function cacheKey(type: AnalyzeType, provider: LlmProviderKind, model: string, locale: string): string {
-  return createHash("sha256").update(`${type}:${provider}:${model}:${locale}`).digest("hex").slice(0, 16);
+function comboKey(type: AnalyzeType, provider: LlmProviderKind, model: string, locale: string): string {
+  return createHash("sha256").update(`${type}:${provider}:${model}:${locale}`).digest("hex").slice(0, 12);
+}
+
+function runAnalysisId(combo: string, createdAt: string, force: boolean): string {
+  if (force) {
+    return createHash("sha256").update(`${combo}:${createdAt}`).digest("hex").slice(0, 16);
+  }
+  return combo;
+}
+
+async function readAllAnalyses(dir: string): Promise<AnalyzeResult[]> {
+  try {
+    const files = await readdir(dir);
+    const results: AnalyzeResult[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        results.push(JSON.parse(await readFile(join(dir, file), "utf8")) as AnalyzeResult);
+      } catch {}
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+function latestForCombo(
+  items: AnalyzeResult[],
+  type: AnalyzeType,
+  provider: LlmProviderKind,
+  model: string,
+  locale: "ar" | "en",
+): AnalyzeResult | null {
+  return (
+    items
+      .filter(
+        (a) =>
+          a.type === type &&
+          a.provider === provider &&
+          a.model === model &&
+          (a.locale ?? "en") === locale,
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime(),
+      )[0] ?? null
+  );
 }
 
 export async function runAnalysis(
@@ -33,19 +79,20 @@ export async function runAnalysis(
     provider?: LlmProviderKind;
     model?: string;
     locale?: "ar" | "en";
+    force?: boolean;
   },
 ): Promise<AnalyzeResult> {
   const provider = opts.provider ?? getLlmConfig().defaultProvider;
   const model = resolveModel(provider, opts.model);
   const locale = opts.locale ?? "en";
-  const key = cacheKey(opts.type, provider, model, locale);
+  const force = opts.force ?? false;
   const dir = analysisCacheDir(transcript.agent, transcript.sessionId);
-  const cachePath = join(dir, `${key}.json`);
+  const combo = comboKey(opts.type, provider, model, locale);
 
-  try {
-    const cached = JSON.parse(await readFile(cachePath, "utf8")) as AnalyzeResult;
-    return { ...cached, cached: true };
-  } catch {}
+  if (!force) {
+    const existing = latestForCombo(await readAllAnalyses(dir), opts.type, provider, model, locale);
+    if (existing) return { ...existing, cached: true };
+  }
 
   const toolSummary = transcript.toolEvents
     .slice(0, 100)
@@ -79,8 +126,10 @@ export async function runAnalysis(
     maxTokens: 2048,
   });
 
+  const createdAt = new Date().toISOString();
+  const analysisId = runAnalysisId(combo, createdAt, force);
   const result: AnalyzeResult = {
-    analysisId: key,
+    analysisId,
     type: opts.type,
     markdown: response.text,
     tokensUsed: response.tokensUsed,
@@ -88,11 +137,11 @@ export async function runAnalysis(
     provider,
     model,
     locale,
-    createdAt: new Date().toISOString(),
+    createdAt,
   };
 
   await mkdir(dir, { recursive: true });
-  await writeFile(cachePath, JSON.stringify(result, null, 2), "utf8");
+  await writeFile(join(dir, `${analysisId}.json`), JSON.stringify(result, null, 2), "utf8");
   return result;
 }
 
@@ -100,32 +149,20 @@ export async function listSessionAnalyses(
   agent: string,
   sessionId: string,
 ): Promise<AnalysisIndexEntry[]> {
-  const dir = analysisCacheDir(agent, sessionId);
-  try {
-    const files = await readdir(dir);
-    const entries: AnalysisIndexEntry[] = [];
-    for (const file of files) {
-      if (!file.endsWith(".json")) continue;
-      try {
-        const data = JSON.parse(await readFile(join(dir, file), "utf8")) as AnalyzeResult;
-        entries.push({
-          analysisId: data.analysisId,
-          type: data.type,
-          provider: data.provider,
-          model: data.model,
-          locale: data.locale ?? "en",
-          createdAt: data.createdAt ?? new Date(0).toISOString(),
-          preview: data.markdown.slice(0, 160).replace(/\s+/g, " ").trim(),
-          cached: true,
-        });
-      } catch {}
-    }
-    return entries.sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
-  } catch {
-    return [];
-  }
+  const items = await readAllAnalyses(analysisCacheDir(agent, sessionId));
+  return items
+    .map((data) => ({
+      analysisId: data.analysisId,
+      type: data.type,
+      provider: data.provider,
+      model: data.model,
+      locale: data.locale ?? "en",
+      createdAt: data.createdAt ?? new Date(0).toISOString(),
+      preview: data.markdown.slice(0, 160).replace(/\s+/g, " ").trim(),
+      tokensUsed: data.tokensUsed,
+      cached: true as const,
+    }))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 export async function getSessionAnalysis(
@@ -148,6 +185,12 @@ export async function findSessionAnalysis(
   sessionId: string,
   opts: { type: AnalyzeType; provider: LlmProviderKind; model: string; locale: "ar" | "en" },
 ): Promise<AnalyzeResult | null> {
-  const key = cacheKey(opts.type, opts.provider, opts.model, opts.locale);
-  return getSessionAnalysis(agent, sessionId, key);
+  const latest = latestForCombo(
+    await readAllAnalyses(analysisCacheDir(agent, sessionId)),
+    opts.type,
+    opts.provider,
+    opts.model,
+    opts.locale,
+  );
+  return latest;
 }

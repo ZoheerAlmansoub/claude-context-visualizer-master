@@ -115,6 +115,7 @@ export type AnalysisIndexEntry = {
   locale: "ar" | "en";
   createdAt: string;
   preview: string;
+  tokensUsed?: number;
   cached: true;
 };
 
@@ -268,7 +269,13 @@ export const api = {
   analyze: (
     agent: AgentKind,
     sessionId: string,
-    body: { type: AnalyzeType; provider?: LlmProviderKind; model?: string; locale?: "ar" | "en" },
+    body: {
+      type: AnalyzeType;
+      provider?: LlmProviderKind;
+      model?: string;
+      locale?: "ar" | "en";
+      force?: boolean;
+    },
   ) =>
     post<AnalyzeResult>(
       `/api/sessions/${encodeURIComponent(sessionId)}/analyze?agent=${encodeURIComponent(agent)}`,

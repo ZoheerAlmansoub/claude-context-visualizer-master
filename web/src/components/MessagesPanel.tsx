@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Copy, Sparkles, FileText } from "lucide-react";
 import {
   api,
@@ -9,7 +9,8 @@ import {
   type SessionTranscript,
 } from "../api";
 import { ActionButton } from "./ui/ActionButton";
-import { ImprovementLoadingCards, ImprovementResultCards } from "./ui/ImprovementResultCards";
+import { ImprovementHistoryList } from "./ui/ImprovementHistoryList";
+import { ImprovementLoadingCards } from "./ui/ImprovementResultCards";
 
 type Props = {
   agent: AgentKind;
@@ -24,9 +25,22 @@ function detectLocale(text: string): "ar" | "en" {
   return /[\u0600-\u06FF]/.test(text) ? "ar" : "en";
 }
 
+function groupImprovementsByMessage(
+  items: PromptImprovementResult[],
+): Record<string, PromptImprovementResult[]> {
+  const map: Record<string, PromptImprovementResult[]> = {};
+  for (const item of items) {
+    if (!map[item.messageId]) map[item.messageId] = [];
+    map[item.messageId].push(item);
+  }
+  return map;
+}
+
 export function MessagesPanel({ agent, sessionId }: Props) {
   const [transcript, setTranscript] = useState<SessionTranscript | null>(null);
-  const [improvements, setImprovements] = useState<Record<string, PromptImprovementResult>>({});
+  const [improvementsByMessage, setImprovementsByMessage] = useState<
+    Record<string, PromptImprovementResult[]>
+  >({});
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [improving, setImproving] = useState<Set<string>>(new Set());
@@ -44,9 +58,7 @@ export function MessagesPanel({ agent, sessionId }: Props) {
       .then(([t, imp, cfg]) => {
         setTranscript(t);
         setLlmProvider(cfg.defaultProvider);
-        const map: Record<string, PromptImprovementResult> = {};
-        for (const item of imp.improvements) map[item.messageId] = item;
-        setImprovements(map);
+        setImprovementsByMessage(groupImprovementsByMessage(imp.improvements));
       })
       .catch((e) => alert(String(e)))
       .finally(() => setLoading(false));
@@ -55,6 +67,15 @@ export function MessagesPanel({ agent, sessionId }: Props) {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const totalImprovementRuns = useMemo(
+    () => Object.values(improvementsByMessage).reduce((n, arr) => n + arr.length, 0),
+    [improvementsByMessage],
+  );
+  const improvedMessageCount = useMemo(
+    () => Object.keys(improvementsByMessage).length,
+    [improvementsByMessage],
+  );
 
   const showCopied = (id: string) => {
     setCopied(id);
@@ -75,7 +96,16 @@ export function MessagesPanel({ agent, sessionId }: Props) {
         locale,
         force,
       });
-      setImprovements((prev) => ({ ...prev, [messageId]: result }));
+      setImprovementsByMessage((prev) => {
+        const existing = prev[messageId] ?? [];
+        const withoutDup = existing.filter((i) => i.improvementId !== result.improvementId);
+        return {
+          ...prev,
+          [messageId]: [result, ...withoutDup].sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          ),
+        };
+      });
     } catch (e) {
       alert(String(e));
     } finally {
@@ -110,7 +140,6 @@ export function MessagesPanel({ agent, sessionId }: Props) {
   };
   const hiddenByFilter =
     filterPostCompaction && stats.totalCount > stats.visibleCount;
-  const improvedCount = Object.keys(improvements).length;
 
   return (
     <div className="panel messages-panel">
@@ -118,7 +147,9 @@ export function MessagesPanel({ agent, sessionId }: Props) {
         <div className="panel-stats">
           {userMessages.messages.length} messages
           {hiddenByFilter && ` (of ${stats.totalCount} total)`}
-          {improvedCount > 0 && ` · ${improvedCount} improved`}
+          {improvedMessageCount > 0 && ` · ${improvedMessageCount} improved`}
+          {totalImprovementRuns > improvedMessageCount &&
+            ` · ${totalImprovementRuns} runs`}
           {" · "}
           {fmt(userMessages.totalTokens)} tokens · {fmt(userMessages.totalChars)} chars
         </div>
@@ -174,13 +205,14 @@ export function MessagesPanel({ agent, sessionId }: Props) {
         )}
         {userMessages.messages.map((msg) => {
           const open = expanded.has(msg.id);
-          const imp = improvements[msg.id];
+          const improvements = improvementsByMessage[msg.id] ?? [];
+          const hasImprovements = improvements.length > 0;
           const busy = improving.has(msg.id);
           const locale = detectLocale(msg.text);
           return (
             <div
               key={msg.id}
-              className={`message-card${open ? " expanded" : ""}${imp ? " has-improvement" : ""}${busy ? " is-improving" : ""}`}
+              className={`message-card${open ? " expanded" : ""}${hasImprovements ? " has-improvement" : ""}${busy ? " is-improving" : ""}`}
             >
               <div
                 className="message-header"
@@ -196,7 +228,16 @@ export function MessagesPanel({ agent, sessionId }: Props) {
                 <span className="message-turn">Turn {msg.turn}</span>
                 {msg.timestamp && <span className="message-ts">{msg.timestamp}</span>}
                 <span className="message-tokens">{fmt(msg.tokens ?? 0)} tok</span>
-                {imp && !busy && <span className="badge badge-improved">Improved</span>}
+                {hasImprovements && !busy && (
+                  <>
+                    <span className="badge badge-improved">Improved</span>
+                    {improvements.length > 1 && (
+                      <span className="badge badge-improved-runs" title="Saved improvement runs">
+                        {improvements.length} runs
+                      </span>
+                    )}
+                  </>
+                )}
                 {busy && <span className="badge badge-loading">Improving…</span>}
                 <div className="message-header-actions" onClick={(e) => e.stopPropagation()}>
                   <ActionButton
@@ -212,10 +253,16 @@ export function MessagesPanel({ agent, sessionId }: Props) {
                     icon={Sparkles}
                     loading={busy}
                     loadingLabel={locale === "ar" ? "جاري التحسين…" : "Improving…"}
-                    onClick={() => runImprove(msg.id, msg.text, Boolean(imp))}
+                    onClick={() => runImprove(msg.id, msg.text, hasImprovements)}
                     title="Rewrite this prompt for better agent results"
                   >
-                    {imp ? "Re-improve" : "Improve prompt"}
+                    {hasImprovements
+                      ? locale === "ar"
+                        ? "تحسين جديد"
+                        : "New improvement"
+                      : locale === "ar"
+                        ? "تحسين المطالبة"
+                        : "Improve prompt"}
                   </ActionButton>
                 </div>
               </div>
@@ -227,17 +274,19 @@ export function MessagesPanel({ agent, sessionId }: Props) {
                 <>
                   <pre className="message-full">{msg.text}</pre>
                   {busy && <ImprovementLoadingCards locale={locale} />}
-                  {!busy && imp && (
-                    <ImprovementResultCards
-                      imp={imp}
+                  {!busy && hasImprovements && (
+                    <ImprovementHistoryList
+                      items={improvements}
                       copiedId={copied}
                       onCopy={handleCopy}
+                      locale={locale}
                     />
                   )}
-                  {!imp && !busy && (
+                  {!hasImprovements && !busy && (
                     <div className="improvement-hint">
                       Use <strong>Improve prompt</strong> to get a structured rewrite with learning
-                      tips for this message.
+                      tips for this message. Each run is saved so you can compare providers and
+                      models later.
                     </div>
                   )}
                 </>

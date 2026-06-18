@@ -76,6 +76,7 @@ export type AnalysisIndexEntry = {
   locale: "ar" | "en";
   createdAt: string;
   preview: string;
+  tokensUsed?: number;
   cached: true;
 };
 
