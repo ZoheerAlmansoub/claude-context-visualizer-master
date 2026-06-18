@@ -163,6 +163,7 @@ const server = Bun.serve({
           provider: body.provider as LlmProviderKind | undefined,
           model: body.model as string | undefined,
           locale: (body.locale as "ar" | "en") ?? "en",
+          force: body.force === true,
         });
         return json(result);
       }

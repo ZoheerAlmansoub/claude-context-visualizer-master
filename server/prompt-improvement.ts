@@ -25,7 +25,7 @@ function textHash(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 12);
 }
 
-function improvementKey(
+function stableImprovementKey(
   turn: number,
   originalText: string,
   provider: LlmProviderKind,
@@ -35,7 +35,53 @@ function improvementKey(
   return createHash("sha256")
     .update(`improve:${turn}:${textHash(originalText)}:${provider}:${model}:${locale}`)
     .digest("hex")
-    .slice(0, 16);
+    .slice(0, 12);
+}
+
+function runImprovementId(stable: string, createdAt: string, force: boolean): string {
+  if (force) {
+    return createHash("sha256").update(`${stable}:${createdAt}`).digest("hex").slice(0, 16);
+  }
+  return stable;
+}
+
+async function readAllImprovements(dir: string): Promise<PromptImprovementResult[]> {
+  try {
+    const files = await readdir(dir);
+    const results: PromptImprovementResult[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const data = JSON.parse(await readFile(join(dir, file), "utf8")) as PromptImprovementResult;
+        results.push(sanitizeImprovementResult({ ...data, cached: true }));
+      } catch {}
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+function latestImprovementForMessage(
+  items: PromptImprovementResult[],
+  messageId: string,
+  provider: LlmProviderKind,
+  model: string,
+  locale: "ar" | "en",
+): PromptImprovementResult | null {
+  return (
+    items
+      .filter(
+        (i) =>
+          i.messageId === messageId &&
+          i.provider === provider &&
+          i.model === model &&
+          i.locale === locale,
+      )
+      .sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      )[0] ?? null
+  );
 }
 
 function sanitizeImprovementResult(result: PromptImprovementResult): PromptImprovementResult {
@@ -82,21 +128,21 @@ export async function listPromptImprovements(
   agent: AgentKind,
   sessionId: string,
 ): Promise<PromptImprovementResult[]> {
-  const dir = improvementsDir(agent, sessionId);
-  try {
-    const files = await readdir(dir);
-    const results: PromptImprovementResult[] = [];
-    for (const file of files) {
-      if (!file.endsWith(".json")) continue;
-      try {
-        const data = JSON.parse(await readFile(join(dir, file), "utf8")) as PromptImprovementResult;
-        results.push(sanitizeImprovementResult({ ...data, cached: true }));
-      } catch {}
-    }
-    return results.sort((a, b) => a.turn - b.turn);
-  } catch {
-    return [];
-  }
+  const items = await readAllImprovements(improvementsDir(agent, sessionId));
+  return items.sort(
+    (a, b) =>
+      a.turn - b.turn ||
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
+export async function listPromptImprovementsForMessage(
+  agent: AgentKind,
+  sessionId: string,
+  messageId: string,
+): Promise<PromptImprovementResult[]> {
+  const items = await listPromptImprovements(agent, sessionId);
+  return items.filter((i) => i.messageId === messageId);
 }
 
 export async function improveUserPrompt(
@@ -115,15 +161,19 @@ export async function improveUserPrompt(
   const provider = opts.provider ?? getLlmConfig().defaultProvider;
   const model = resolveModel(provider, opts.model);
   const locale = opts.locale ?? "en";
-  const key = improvementKey(message.turn, message.text, provider, model, locale);
+  const force = opts.force ?? false;
+  const stable = stableImprovementKey(message.turn, message.text, provider, model, locale);
   const dir = improvementsDir(transcript.agent, transcript.sessionId);
-  const cachePath = join(dir, `${key}.json`);
 
-  if (!opts.force) {
-    try {
-      const cached = JSON.parse(await readFile(cachePath, "utf8")) as PromptImprovementResult;
-      return sanitizeImprovementResult({ ...cached, cached: true });
-    } catch {}
+  if (!force) {
+    const existing = latestImprovementForMessage(
+      await readAllImprovements(dir),
+      messageId,
+      provider,
+      model,
+      locale,
+    );
+    if (existing) return existing;
   }
 
   const { system, user } = buildPromptImprovementPrompt(
@@ -158,8 +208,9 @@ export async function improveUserPrompt(
   }
 
   const createdAt = new Date().toISOString();
+  const improvementId = runImprovementId(stable, createdAt, force);
   const result: PromptImprovementResult = {
-    improvementId: key,
+    improvementId,
     messageId: message.id,
     turn: message.turn,
     originalText: message.text,
@@ -182,7 +233,7 @@ export async function improveUserPrompt(
   };
 
   await mkdir(dir, { recursive: true });
-  await writeFile(cachePath, JSON.stringify(result, null, 2), "utf8");
+  await writeFile(join(dir, `${improvementId}.json`), JSON.stringify(result, null, 2), "utf8");
   return sanitizeImprovementResult(result);
 }
 
