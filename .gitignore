@@ -5,5 +5,6 @@ web/dist
 *.tsbuildinfo
 *.log
 .DS_Store
+.env
 .playwright-mcp
 .claude/settings.local.json
