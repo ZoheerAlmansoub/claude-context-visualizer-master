@@ -1,10 +1,15 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Check, Copy, Sparkles, FileText } from "lucide-react";
 import {
   api,
   copyText,
   type AgentKind,
+  type LlmProviderKind,
+  type PromptImprovementResult,
   type SessionTranscript,
 } from "../api";
+import { ActionButton } from "./ui/ActionButton";
+import { ImprovementLoadingCards, ImprovementResultCards } from "./ui/ImprovementResultCards";
 
 type Props = {
   agent: AgentKind;
@@ -15,28 +20,81 @@ function fmt(n: number): string {
   return n.toLocaleString();
 }
 
+function detectLocale(text: string): "ar" | "en" {
+  return /[\u0600-\u06FF]/.test(text) ? "ar" : "en";
+}
+
 export function MessagesPanel({ agent, sessionId }: Props) {
   const [transcript, setTranscript] = useState<SessionTranscript | null>(null);
+  const [improvements, setImprovements] = useState<Record<string, PromptImprovementResult>>({});
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [improving, setImproving] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState<string | null>(null);
   const [filterPostCompaction, setFilterPostCompaction] = useState(false);
+  const [llmProvider, setLlmProvider] = useState<LlmProviderKind>("anthropic");
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
     setLoading(true);
-    api
-      .transcript(agent, sessionId, filterPostCompaction)
-      .then(setTranscript)
+    Promise.all([
+      api.transcript(agent, sessionId, filterPostCompaction),
+      api.listPromptImprovements(agent, sessionId),
+      api.llmConfig(),
+    ])
+      .then(([t, imp, cfg]) => {
+        setTranscript(t);
+        setLlmProvider(cfg.defaultProvider);
+        const map: Record<string, PromptImprovementResult> = {};
+        for (const item of imp.improvements) map[item.messageId] = item;
+        setImprovements(map);
+      })
       .catch((e) => alert(String(e)))
       .finally(() => setLoading(false));
   }, [agent, sessionId, filterPostCompaction]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const showCopied = (id: string) => {
     setCopied(id);
     setTimeout(() => setCopied(null), 1500);
   };
 
-  if (loading || !transcript) return <div className="loading">Loading messages…</div>;
+  const handleCopy = (id: string, text: string) => {
+    copyText(text).then(() => showCopied(id));
+  };
+
+  const runImprove = async (messageId: string, text: string, force = false) => {
+    const locale = detectLocale(text);
+    setExpanded((prev) => new Set(prev).add(messageId));
+    setImproving((prev) => new Set(prev).add(messageId));
+    try {
+      const result = await api.improvePrompt(agent, sessionId, messageId, {
+        provider: llmProvider,
+        locale,
+        force,
+      });
+      setImprovements((prev) => ({ ...prev, [messageId]: result }));
+    } catch (e) {
+      alert(String(e));
+    } finally {
+      setImproving((prev) => {
+        const n = new Set(prev);
+        n.delete(messageId);
+        return n;
+      });
+    }
+  };
+
+  if (loading || !transcript) {
+    return (
+      <div className="panel-loading">
+        <span className="improvement-loading-spinner" aria-hidden />
+        <span>Loading messages…</span>
+      </div>
+    );
+  }
 
   const userMessages = transcript.userMessages ?? {
     messages: [],
@@ -52,6 +110,7 @@ export function MessagesPanel({ agent, sessionId }: Props) {
   };
   const hiddenByFilter =
     filterPostCompaction && stats.totalCount > stats.visibleCount;
+  const improvedCount = Object.keys(improvements).length;
 
   return (
     <div className="panel messages-panel">
@@ -59,6 +118,7 @@ export function MessagesPanel({ agent, sessionId }: Props) {
         <div className="panel-stats">
           {userMessages.messages.length} messages
           {hiddenByFilter && ` (of ${stats.totalCount} total)`}
+          {improvedCount > 0 && ` · ${improvedCount} improved`}
           {" · "}
           {fmt(userMessages.totalTokens)} tokens · {fmt(userMessages.totalChars)} chars
         </div>
@@ -73,26 +133,23 @@ export function MessagesPanel({ agent, sessionId }: Props) {
               Post-compaction only
             </label>
           )}
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() =>
-              copyText(userMessages.aggregatedText).then(() => showCopied("all-md"))
-            }
+          <ActionButton
+            icon={copied === "all-md" ? Check : Copy}
+            onClick={() => handleCopy("all-md", userMessages.aggregatedText)}
           >
             {copied === "all-md" ? "Copied!" : "Copy all (markdown)"}
-          </button>
-          <button
-            type="button"
-            className="btn-secondary"
+          </ActionButton>
+          <ActionButton
+            icon={copied === "all-plain" ? Check : FileText}
             onClick={() =>
-              copyText(userMessages.messages.map((m) => m.text).join("\n\n---\n\n")).then(() =>
-                showCopied("all-plain"),
+              handleCopy(
+                "all-plain",
+                userMessages.messages.map((m) => m.text).join("\n\n---\n\n"),
               )
             }
           >
             {copied === "all-plain" ? "Copied!" : "Copy all (plain)"}
-          </button>
+          </ActionButton>
         </div>
       </div>
 
@@ -117,8 +174,14 @@ export function MessagesPanel({ agent, sessionId }: Props) {
         )}
         {userMessages.messages.map((msg) => {
           const open = expanded.has(msg.id);
+          const imp = improvements[msg.id];
+          const busy = improving.has(msg.id);
+          const locale = detectLocale(msg.text);
           return (
-            <div key={msg.id} className={`message-card${open ? " expanded" : ""}`}>
+            <div
+              key={msg.id}
+              className={`message-card${open ? " expanded" : ""}${imp ? " has-improvement" : ""}${busy ? " is-improving" : ""}`}
+            >
               <div
                 className="message-header"
                 onClick={() =>
@@ -133,19 +196,52 @@ export function MessagesPanel({ agent, sessionId }: Props) {
                 <span className="message-turn">Turn {msg.turn}</span>
                 {msg.timestamp && <span className="message-ts">{msg.timestamp}</span>}
                 <span className="message-tokens">{fmt(msg.tokens ?? 0)} tok</span>
-                <button
-                  type="button"
-                  className="btn-copy-inline"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    copyText(msg.text).then(() => showCopied(msg.id));
-                  }}
-                >
-                  {copied === msg.id ? "Copied" : "Copy"}
-                </button>
+                {imp && !busy && <span className="badge badge-improved">Improved</span>}
+                {busy && <span className="badge badge-loading">Improving…</span>}
+                <div className="message-header-actions" onClick={(e) => e.stopPropagation()}>
+                  <ActionButton
+                    variant="ghost"
+                    className="btn-copy-inline"
+                    icon={copied === `orig-${msg.id}` ? Check : Copy}
+                    onClick={() => handleCopy(`orig-${msg.id}`, msg.text)}
+                  >
+                    {copied === `orig-${msg.id}` ? "Copied" : "Copy"}
+                  </ActionButton>
+                  <ActionButton
+                    variant="accent"
+                    icon={Sparkles}
+                    loading={busy}
+                    loadingLabel={locale === "ar" ? "جاري التحسين…" : "Improving…"}
+                    onClick={() => runImprove(msg.id, msg.text, Boolean(imp))}
+                    title="Rewrite this prompt for better agent results"
+                  >
+                    {imp ? "Re-improve" : "Improve prompt"}
+                  </ActionButton>
+                </div>
               </div>
-              <div className="message-preview">{msg.text.slice(0, open ? undefined : 200)}{!open && msg.text.length > 200 ? "…" : ""}</div>
-              {open && <pre className="message-full">{msg.text}</pre>}
+              <div className="message-preview">
+                {msg.text.slice(0, open ? undefined : 200)}
+                {!open && msg.text.length > 200 ? "…" : ""}
+              </div>
+              {open && (
+                <>
+                  <pre className="message-full">{msg.text}</pre>
+                  {busy && <ImprovementLoadingCards locale={locale} />}
+                  {!busy && imp && (
+                    <ImprovementResultCards
+                      imp={imp}
+                      copiedId={copied}
+                      onCopy={handleCopy}
+                    />
+                  )}
+                  {!imp && !busy && (
+                    <div className="improvement-hint">
+                      Use <strong>Improve prompt</strong> to get a structured rewrite with learning
+                      tips for this message.
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           );
         })}

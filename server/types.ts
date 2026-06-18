@@ -64,6 +64,37 @@ export type AnalyzeResult = {
   cached: boolean;
   provider: LlmProviderKind;
   model: string;
+  locale?: "ar" | "en";
+  createdAt?: string;
+};
+
+export type AnalysisIndexEntry = {
+  analysisId: string;
+  type: AnalyzeType;
+  provider: LlmProviderKind;
+  model: string;
+  locale: "ar" | "en";
+  createdAt: string;
+  preview: string;
+  cached: true;
+};
+
+export type PromptImprovementResult = {
+  improvementId: string;
+  messageId: string;
+  turn: number;
+  originalText: string;
+  improvedPrompt: string;
+  rationale: string;
+  tips: string[];
+  issues: string[];
+  markdown: string;
+  tokensUsed?: number;
+  cached: boolean;
+  provider: LlmProviderKind;
+  model: string;
+  locale: "ar" | "en";
+  createdAt: string;
 };
 
 export type GeneratedArtifact = {
