@@ -3,8 +3,8 @@
 // produced, not part of its input, so it is intentionally excluded.
 export function realTotalFromUsage(u: any): number {
   return (
-    (u?.input_tokens ?? 0) +
-    (u?.cache_creation_input_tokens ?? 0) +
-    (u?.cache_read_input_tokens ?? 0)
+    (u?.input_tokens ?? u?.input ?? 0) +
+    (u?.cache_creation_input_tokens ?? u?.cacheWrite ?? 0) +
+    (u?.cache_read_input_tokens ?? u?.cacheRead ?? 0)
   );
 }

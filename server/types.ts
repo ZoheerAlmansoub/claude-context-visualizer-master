@@ -1,4 +1,7 @@
+export type AgentKind = "claude" | "pi" | "opencode";
+
 export type SessionListItem = {
+  agent: AgentKind;
   id: string;
   project: string;
   projectPath: string;
@@ -11,10 +14,12 @@ export type SessionListItem = {
 };
 
 export type ProjectInfo = {
+  agent: AgentKind;
   slug: string;
   path: string;
   sessionCount: number;
   latestMtimeMs: number;
+  unavailableReason?: string;
 };
 
 export type Headline = {
@@ -64,6 +69,7 @@ export type CompactionInfo = {
 
 export type Snapshot = {
   schemaVersion: number;
+  agent: AgentKind;
   sessionId: string;
   filePath: string;
   mtimeMs: number;

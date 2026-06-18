@@ -1,4 +1,7 @@
+export type AgentKind = "claude" | "pi" | "opencode";
+
 export type SessionListItem = {
+  agent: AgentKind;
   id: string;
   project: string;
   projectPath: string;
@@ -11,10 +14,12 @@ export type SessionListItem = {
 };
 
 export type ProjectInfo = {
+  agent: AgentKind;
   slug: string;
   path: string;
   sessionCount: number;
   latestMtimeMs: number;
+  unavailableReason?: string;
 };
 
 export type LeafItem = {
@@ -44,6 +49,7 @@ export type CompactionInfo = {
 };
 export type Snapshot = {
   schemaVersion?: number;
+  agent: AgentKind;
   sessionId: string;
   filePath: string;
   mtimeMs: number;
@@ -67,9 +73,15 @@ async function post<T>(url: string): Promise<T> {
 }
 
 export const api = {
-  projects: () => get<ProjectInfo[]>("/api/projects"),
-  sessions: (project: string) =>
-    get<SessionListItem[]>(`/api/sessions?project=${encodeURIComponent(project)}`),
-  snapshot: (sessionId: string) => get<Snapshot>(`/api/sessions/${sessionId}/snapshot`),
-  invalidate: (sessionId: string) => post<{ ok: boolean }>(`/api/sessions/${sessionId}/invalidate-cache`),
+  projects: (agent: AgentKind) => get<ProjectInfo[]>(`/api/projects?agent=${encodeURIComponent(agent)}`),
+  sessions: (agent: AgentKind, project: string) =>
+    get<SessionListItem[]>(
+      `/api/sessions?agent=${encodeURIComponent(agent)}&project=${encodeURIComponent(project)}`,
+    ),
+  snapshot: (agent: AgentKind, sessionId: string) =>
+    get<Snapshot>(`/api/sessions/${encodeURIComponent(sessionId)}/snapshot?agent=${encodeURIComponent(agent)}`),
+  invalidate: (agent: AgentKind, sessionId: string) =>
+    post<{ ok: boolean }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/invalidate-cache?agent=${encodeURIComponent(agent)}`,
+    ),
 };

@@ -1,8 +1,11 @@
 import { readdir, stat, open } from "node:fs/promises";
 import { join, basename } from "node:path";
-import { CLAUDE_PROJECTS_DIR, decodeProjectSlug } from "./paths.ts";
+import {
+  decodeProjectSlugForAgent,
+  getAgentConfig,
+} from "./paths.ts";
 import { streamJSONL } from "./jsonl.ts";
-import type { SessionListItem, ProjectInfo } from "./types.ts";
+import type { AgentKind, SessionListItem, ProjectInfo } from "./types.ts";
 import { realTotalFromUsage } from "./usage.ts";
 
 const IO_CONCURRENCY = 16;
@@ -69,6 +72,7 @@ async function firstCwdQuick(filePath: string): Promise<string | null> {
         try {
           const rec = JSON.parse(line);
           if (typeof rec?.cwd === "string") return rec.cwd;
+          if (rec?.type === "session" && typeof rec?.cwd === "string") return rec.cwd;
         } catch {}
       }
     } finally {
@@ -78,11 +82,28 @@ async function firstCwdQuick(filePath: string): Promise<string | null> {
   return null;
 }
 
-export async function listProjects(): Promise<ProjectInfo[]> {
-  const entries = await readdir(CLAUDE_PROJECTS_DIR, { withFileTypes: true });
+async function opencodeUnavailableProject(): Promise<ProjectInfo[]> {
+  return [
+    {
+      agent: "opencode",
+      slug: "__unavailable__",
+      path: "OpenCode transcripts unavailable",
+      sessionCount: 0,
+      latestMtimeMs: 0,
+      unavailableReason:
+        "This OpenCode storage currently contains session_diff patch files, not full transcript data.",
+    },
+  ];
+}
+
+export async function listProjects(agent: AgentKind = "claude"): Promise<ProjectInfo[]> {
+  if (agent === "opencode") return opencodeUnavailableProject();
+
+  const sessionsDir = getAgentConfig(agent).sessionsDir;
+  const entries = await readdir(sessionsDir, { withFileTypes: true });
   const dirs = entries.filter((e) => e.isDirectory());
   const projects = await mapLimit(dirs, IO_CONCURRENCY, async (e): Promise<ProjectInfo | null> => {
-    const dirPath = join(CLAUDE_PROJECTS_DIR, e.name);
+    const dirPath = join(sessionsDir, e.name);
     let files: string[];
     try {
       files = (await readdir(dirPath)).filter((f) => f.endsWith(".jsonl"));
@@ -109,8 +130,9 @@ export async function listProjects(): Promise<ProjectInfo[]> {
     });
     const cwd = latestFile ? await firstCwdQuick(join(dirPath, latestFile)) : null;
     return {
+      agent,
       slug: e.name,
-      path: cwd ?? decodeProjectSlug(e.name),
+      path: cwd ?? decodeProjectSlugForAgent(agent, e.name),
       sessionCount: files.length,
       latestMtimeMs: latest,
     };
@@ -151,10 +173,17 @@ export async function indexSessionFile(filePath: string): Promise<{
 
   await streamJSONL(filePath, (rec, idx) => {
     if (!cwd && typeof rec?.cwd === "string") cwd = rec.cwd;
+    if (!cwd && rec?.type === "session" && typeof rec?.cwd === "string") cwd = rec.cwd;
     if (rec?.type === "system" && rec?.subtype === "compact_boundary") {
       hasCompaction = true;
     }
-    if (!title && rec?.type === "user" && rec?.message?.content) {
+    if (rec?.type === "compaction") {
+      hasCompaction = true;
+    }
+    const role = rec?.message?.role;
+    const isClaudeUser = rec?.type === "user";
+    const isPiUser = rec?.type === "message" && role === "user";
+    if (!title && (isClaudeUser || isPiUser) && rec?.message?.content) {
       const c = rec.message.content;
       let raw = "";
       if (typeof c === "string") {
@@ -169,12 +198,14 @@ export async function indexSessionFile(filePath: string): Promise<{
       }
       title = extractTitle(raw);
     }
-    if (rec?.type === "assistant" && rec?.message?.usage && idx > latestUsageOrder) {
+    const isClaudeAssistant = rec?.type === "assistant";
+    const isPiAssistant = rec?.type === "message" && role === "assistant";
+    if ((isClaudeAssistant || isPiAssistant) && rec?.message?.usage && idx > latestUsageOrder) {
       const u = rec.message.usage;
-      const it = u.input_tokens ?? 0;
-      const cc = u.cache_creation_input_tokens ?? 0;
-      const cr = u.cache_read_input_tokens ?? 0;
-      const ot = u.output_tokens ?? 0;
+      const it = u.input_tokens ?? u.input ?? 0;
+      const cc = u.cache_creation_input_tokens ?? u.cacheWrite ?? 0;
+      const cr = u.cache_read_input_tokens ?? u.cacheRead ?? 0;
+      const ot = u.output_tokens ?? u.output ?? 0;
       const total = realTotalFromUsage(u);
       if (total > 0) {
         latestUsageOrder = idx;
@@ -203,8 +234,10 @@ export async function indexSessionFile(filePath: string): Promise<{
   };
 }
 
-export async function listSessions(projectSlug: string): Promise<SessionListItem[]> {
-  const dirPath = join(CLAUDE_PROJECTS_DIR, projectSlug);
+export async function listSessions(projectSlug: string, agent: AgentKind = "claude"): Promise<SessionListItem[]> {
+  if (agent === "opencode") return [];
+
+  const dirPath = join(getAgentConfig(agent).sessionsDir, projectSlug);
   const entries = (await readdir(dirPath)).filter((f) => f.endsWith(".jsonl"));
   // Index each session file concurrently (bounded) rather than one-at-a-time —
   // this is the dominant latency when opening a project with many sessions.
@@ -219,9 +252,10 @@ export async function listSessions(projectSlug: string): Promise<SessionListItem
     try {
       const meta = await indexSessionFile(filePath);
       return {
+        agent,
         id: meta.id,
         project: projectSlug,
-        projectPath: meta.cwd ?? decodeProjectSlug(projectSlug),
+        projectPath: meta.cwd ?? decodeProjectSlugForAgent(agent, projectSlug),
         filePath,
         mtimeMs: st.mtimeMs,
         title: meta.title,
@@ -231,9 +265,10 @@ export async function listSessions(projectSlug: string): Promise<SessionListItem
       };
     } catch {
       return {
+        agent,
         id: basename(f, ".jsonl"),
         project: projectSlug,
-        projectPath: decodeProjectSlug(projectSlug),
+        projectPath: decodeProjectSlugForAgent(agent, projectSlug),
         filePath,
         mtimeMs: st.mtimeMs,
         title: "(failed to read)",
@@ -248,11 +283,14 @@ export async function listSessions(projectSlug: string): Promise<SessionListItem
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
-export async function findSessionById(sessionId: string): Promise<string | null> {
-  const projects = await readdir(CLAUDE_PROJECTS_DIR, { withFileTypes: true });
+export async function findSessionById(sessionId: string, agent: AgentKind = "claude"): Promise<string | null> {
+  if (agent === "opencode") return null;
+
+  const sessionsDir = getAgentConfig(agent).sessionsDir;
+  const projects = await readdir(sessionsDir, { withFileTypes: true });
   for (const p of projects) {
     if (!p.isDirectory()) continue;
-    const candidate = join(CLAUDE_PROJECTS_DIR, p.name, `${sessionId}.jsonl`);
+    const candidate = join(sessionsDir, p.name, `${sessionId}.jsonl`);
     try {
       await stat(candidate);
       return candidate;

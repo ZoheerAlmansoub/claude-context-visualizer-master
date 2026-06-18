@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type ProjectInfo, type SessionListItem } from "../api";
+import { api, type AgentKind, type ProjectInfo, type SessionListItem } from "../api";
 
 type Props = {
+  agent: AgentKind;
+  onAgentChange: (agent: AgentKind) => void;
   selected: string | null;
   onSelect: (s: SessionListItem) => void;
   collapsed: boolean;
   onToggle: () => void;
 };
+
+const AGENTS: Array<{ id: AgentKind; label: string }> = [
+  { id: "claude", label: "Claude" },
+  { id: "pi", label: "Pi" },
+  { id: "opencode", label: "OpenCode" },
+];
 
 function fmtTokens(n: number | null): string {
   if (n == null) return "—";
@@ -29,28 +37,31 @@ function fmtDate(ms: number): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-export function Sidebar({ selected, onSelect, collapsed, onToggle }: Props) {
+export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, onToggle }: Props) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [sessionsByProject, setSessionsByProject] = useState<Record<string, SessionListItem[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    api.projects().then((p) => {
+    setProjects([]);
+    setSessionsByProject({});
+    setExpanded(new Set());
+    api.projects(agent).then((p) => {
       setProjects(p);
-      if (p[0]) setExpanded(new Set([p[0].slug]));
+      if (p[0] && !p[0].unavailableReason) setExpanded(new Set([p[0].slug]));
     });
-  }, []);
+  }, [agent]);
 
   useEffect(() => {
     for (const slug of expanded) {
       if (!sessionsByProject[slug]) {
-        api.sessions(slug).then((s) => {
+        api.sessions(agent, slug).then((s) => {
           setSessionsByProject((prev) => ({ ...prev, [slug]: s }));
         });
       }
     }
-  }, [expanded]);
+  }, [agent, expanded, sessionsByProject]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -92,6 +103,18 @@ export function Sidebar({ selected, onSelect, collapsed, onToggle }: Props) {
             «
           </button>
         </div>
+        <div className="agent-switcher" aria-label="Agent selector">
+          {AGENTS.map((a) => (
+            <button
+              key={a.id}
+              className={agent === a.id ? "active" : ""}
+              onClick={() => onAgentChange(a.id)}
+              type="button"
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
         <input
           placeholder="Search projects or titles…"
           value={query}
@@ -102,10 +125,18 @@ export function Sidebar({ selected, onSelect, collapsed, onToggle }: Props) {
         <div className="empty-state-sidebar">No matches.</div>
       )}
       {filtered.map((p) => {
+        if (p.unavailableReason) {
+          return (
+            <div key={`${p.agent}:${p.slug}`} className="agent-unavailable">
+              <div className="agent-unavailable-title">{p.path}</div>
+              <div>{p.unavailableReason}</div>
+            </div>
+          );
+        }
         const isOpen = expanded.has(p.slug);
-        const shortLabel = p.path.split("/").slice(-2).join("/") || p.path;
+        const shortLabel = p.path.split(/[\\/]/).slice(-2).join("/") || p.path;
         return (
-          <div key={p.slug} className="project-group">
+          <div key={`${p.agent}:${p.slug}`} className="project-group">
             <div
               className={`project-name ${isOpen ? "open" : ""}`}
               onClick={() => {
@@ -124,7 +155,7 @@ export function Sidebar({ selected, onSelect, collapsed, onToggle }: Props) {
             </div>
             {isOpen && (sessionsByProject[p.slug] ?? []).map((s) => (
               <div
-                key={s.id}
+                key={`${s.agent}:${s.id}`}
                 className={`session-row${selected === s.id ? " selected" : ""}`}
                 onClick={() => onSelect(s)}
                 title={s.title}
