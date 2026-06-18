@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { api, type Snapshot, type SessionListItem, type LeafItem, type Bucket } from "../api";
+import { api, type AgentKind, type Snapshot, type SessionListItem, type LeafItem, type Bucket } from "../api";
 import { Chart, type ViewMode } from "./Chart";
 import { BUCKET_COLORS } from "../colors";
 
-type Props = { session: SessionListItem };
+type Props = { agent: AgentKind; session: SessionListItem };
 
 // Cap on how many item rows are rendered at once (the list can be huge).
 const MAX_ROWS = 500;
@@ -40,7 +40,7 @@ function gatherOffenders(snap: Snapshot): OffenderRow[] {
   return rows;
 }
 
-export function Detail({ session }: Props) {
+export function Detail({ agent, session }: Props) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<ViewMode>("treemap");
@@ -56,11 +56,11 @@ export function Detail({ session }: Props) {
     setSubId(null);
     setExpanded(new Set());
     const fetcher = force
-      ? api.invalidate(session.id).then(() => api.snapshot(session.id))
-      : api.snapshot(session.id);
+      ? api.invalidate(agent, session.id).then(() => api.snapshot(agent, session.id))
+      : api.snapshot(agent, session.id);
     fetcher.then(setSnap).catch((e) => alert(String(e))).finally(() => setLoading(false));
   };
-  useEffect(() => { load(); }, [session.id]);
+  useEffect(() => { load(); }, [agent, session.id]);
 
   const allOffenders = useMemo(() => (snap ? gatherOffenders(snap) : []), [snap]);
 

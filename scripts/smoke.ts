@@ -1,11 +1,18 @@
 import { computeSnapshot } from "../server/snapshot.ts";
+import { isAgentKind } from "../server/paths.ts";
 
 const filePath = process.argv[2];
 if (!filePath) {
-  console.error("usage: bun scripts/smoke.ts <jsonl path>");
+  console.error("usage: bun scripts/smoke.ts <jsonl path> [claude|pi]");
   process.exit(1);
 }
-const snap = await computeSnapshot(filePath);
+const rawAgent = process.argv[3] ?? "claude";
+if (!isAgentKind(rawAgent) || rawAgent === "opencode") {
+  console.error("agent must be claude or pi");
+  process.exit(1);
+}
+const snap = await computeSnapshot(filePath, undefined, rawAgent);
+console.log("agent:", snap.agent);
 console.log("sessionId:", snap.sessionId);
 console.log("model:", snap.headline.model);
 console.log("realTotal:", snap.headline.realTotal);

@@ -9,6 +9,7 @@ import {
   type LeafItem,
   type CompactionInfo,
   type Headline,
+  type AgentKind,
 } from "./types.ts";
 import { realTotalFromUsage } from "./usage.ts";
 
@@ -263,10 +264,130 @@ function toolUseSummary(name: string, input: any): string {
   return name;
 }
 
-export async function computeSnapshot(filePath: string, knownMtimeMs?: number): Promise<Snapshot> {
+function piContentToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return content == null ? "" : JSON.stringify(content);
+  return content
+    .map((block) => {
+      if (typeof block === "string") return block;
+      if (!block || typeof block !== "object") return "";
+      const b = block as any;
+      if (b.type === "text") return b.text ?? "";
+      if (b.type === "thinking") return b.thinking ?? "";
+      return JSON.stringify(b);
+    })
+    .join("\n");
+}
+
+function normalizePiUsage(usage: any): any {
+  if (!usage) return usage;
+  return {
+    ...usage,
+    input_tokens: usage.input ?? 0,
+    cache_creation_input_tokens: usage.cacheWrite ?? 0,
+    cache_read_input_tokens: usage.cacheRead ?? 0,
+    output_tokens: usage.output ?? 0,
+  };
+}
+
+function normalizePiContent(content: unknown): any[] {
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block): any[] => {
+    if (typeof block === "string") return [{ type: "text", text: block }];
+    if (!block || typeof block !== "object") return [];
+    const b = block as any;
+    if (b.type === "text") return [{ type: "text", text: b.text ?? "" }];
+    if (b.type === "thinking") {
+      return [
+        {
+          type: "thinking",
+          thinking: b.thinking ?? "",
+          signature: b.thinkingSignature ?? "",
+        },
+      ];
+    }
+    if (b.type === "toolCall") {
+      return [
+        {
+          type: "tool_use",
+          id: b.id,
+          name: b.name ?? "unknown",
+          input: b.arguments ?? {},
+        },
+      ];
+    }
+    return [{ type: "text", text: JSON.stringify(b) }];
+  });
+}
+
+function normalizePiRecords(records: any[]): any[] {
+  return records.flatMap((rec): any[] => {
+    if (rec?.type === "compaction") {
+      return [
+        {
+          type: "system",
+          subtype: "compact_boundary",
+          compactMetadata: {
+            preTokens: rec.tokensBefore ?? 0,
+            postTokens: 0,
+            trigger: rec.fromHook ? "hook" : "pi",
+          },
+        },
+      ];
+    }
+    if (rec?.type !== "message" || !rec?.message) return [];
+
+    const msg = rec.message;
+    if (msg.role === "user") {
+      return [{ type: "user", message: { content: normalizePiContent(msg.content) } }];
+    }
+    if (msg.role === "assistant") {
+      return [
+        {
+          type: "assistant",
+          message: {
+            content: normalizePiContent(msg.content),
+            model: msg.model ?? msg.responseModel ?? null,
+            usage: normalizePiUsage(msg.usage),
+          },
+        },
+      ];
+    }
+    if (msg.role === "toolResult") {
+      return [
+        {
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: msg.toolCallId,
+                content: piContentToText(msg.content),
+                is_error: Boolean(msg.isError),
+              },
+            ],
+          },
+        },
+      ];
+    }
+    return [];
+  });
+}
+
+function normalizeRecordsForAgent(agent: AgentKind, records: any[]): any[] {
+  if (agent === "pi") return normalizePiRecords(records);
+  return records;
+}
+
+export async function computeSnapshot(
+  filePath: string,
+  knownMtimeMs?: number,
+  agent: AgentKind = "claude",
+): Promise<Snapshot> {
   const mtimeMs = knownMtimeMs ?? (await stat(filePath)).mtimeMs;
   const sessionId = basename(filePath, ".jsonl");
-  const records = await readAllJSONL(filePath);
+  const records = normalizeRecordsForAgent(agent, await readAllJSONL(filePath));
   const warnings: string[] = [];
 
   // 1. Find latest assistant with usage (the anchor)
@@ -316,6 +437,7 @@ export async function computeSnapshot(filePath: string, knownMtimeMs?: number): 
     warnings.push("No assistant message with usage found.");
     return {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      agent,
       sessionId,
       filePath,
       mtimeMs,
@@ -340,10 +462,10 @@ export async function computeSnapshot(filePath: string, knownMtimeMs?: number): 
     realTotal,
     modelCap: modelCapFor(model),
     model: model ?? "unknown",
-    inputTokens: usage.input_tokens ?? 0,
-    cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
-    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-    outputTokens: usage.output_tokens ?? 0,
+    inputTokens: usage.input_tokens ?? usage.input ?? 0,
+    cacheCreationTokens: usage.cache_creation_input_tokens ?? usage.cacheWrite ?? 0,
+    cacheReadTokens: usage.cache_read_input_tokens ?? usage.cacheRead ?? 0,
+    outputTokens: usage.output_tokens ?? usage.output ?? 0,
   };
 
   // 3. Walk records from latestBoundary+1 up to (but not including) latestAssistantIdx.
@@ -555,7 +677,8 @@ export async function computeSnapshot(filePath: string, knownMtimeMs?: number): 
   // they over-shoot we present a truthful "no residual" rather than reserving
   // a fake slice.
   const idBuckets = [messagesBucket, toolCallsBucket, toolResultsBucket, attachmentsBucket];
-  scaleBuckets(idBuckets, CL100K_TO_CLAUDE);
+  const calibrationFactor = agent === "claude" ? CL100K_TO_CLAUDE : 1;
+  scaleBuckets(idBuckets, calibrationFactor);
 
   const identifiedSumRaw = idBuckets.reduce((sum, b) => sum + b.tokens, 0);
 
@@ -585,16 +708,16 @@ export async function computeSnapshot(filePath: string, knownMtimeMs?: number): 
           {
             tokens: residual,
             turn: 0,
-            summary: "Claude Code system prompt + tool-schema definitions + harness overhead",
+            summary: `${agent === "claude" ? "Claude Code" : "Agent"} system prompt + tool-schema definitions + harness overhead`,
             fullContent:
               `This bucket is computed as a residual: realTotal − Σ(identified buckets).\n\n` +
               `It primarily reflects:\n` +
-              `  • The Claude Code system prompt (~3-6k tokens, version-dependent).\n` +
+              `  • The agent system prompt (version-dependent).\n` +
               `  • Tool schema JSON sent to the model (~5-25k typical; ~15k+ when MCP bundles like\n` +
               `    Playwright / Chrome DevTools are loaded).\n` +
               `  • Per-message wrapper overhead (role markers, tool-call envelopes).\n\n` +
-              `Token counts use cl100k_base × ${CL100K_TO_CLAUDE} calibration to approximate Claude's BPE. ` +
-              `For exact counts, use Anthropic's /v1/messages/count_tokens API (free, requires key).\n\n` +
+              `Token counts use cl100k_base${calibrationFactor === 1 ? "" : ` × ${calibrationFactor}`} calibration. ` +
+              `Exact counts depend on the model provider's tokenizer.\n\n` +
               `realTotal: ${realTotal}\n` +
               `identifiedSum: ${identifiedSum}\n` +
               `residual: ${residual}\n` +
@@ -616,6 +739,7 @@ export async function computeSnapshot(filePath: string, knownMtimeMs?: number): 
 
   return {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+    agent,
     sessionId,
     filePath,
     mtimeMs,
