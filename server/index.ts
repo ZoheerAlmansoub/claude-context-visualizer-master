@@ -55,6 +55,8 @@ async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
 
 const server = Bun.serve({
   port: PORT,
+  /** Allow long-running analyze/improve-prompt handlers (seconds; max 255) */
+  idleTimeout: 255,
   async fetch(req) {
     const url = new URL(req.url);
     const path = url.pathname;

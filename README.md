@@ -65,7 +65,15 @@ OPENAI_API_KEY=...
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 
-Analysis types: summarize, intent map, experience extract, session review.
+Analysis types (grouped by category):
+
+- **Overview:** summarize, intent map, experience extract, session review
+- **Context & tokens:** token audit
+- **Loops & tools:** loop diagnosis, tool hardening
+- **Artifacts & memory:** artifact blueprint, memory file drafts, agent orchestration
+- **Learning:** agentic lessons
+
+Structured analysis types return JSON parsed into cards with copy/save actions for artifacts and memory files.
 
 ### Artifacts
 

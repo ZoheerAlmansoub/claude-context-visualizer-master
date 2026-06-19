@@ -28,6 +28,45 @@ ${artifact.content}
 `;
 }
 
+export function renderHookMarkdown(artifact: GeneratedArtifact): string {
+  return `# Hook: ${artifact.name}
+
+**Trigger:** ${artifact.trigger}
+
+${artifact.description}
+
+\`\`\`
+${artifact.content}
+\`\`\`
+`;
+}
+
+export function renderSubAgentMarkdown(artifact: GeneratedArtifact): string {
+  return `# Sub-agent: ${artifact.name}
+
+**Trigger:** ${artifact.trigger}
+
+${artifact.description}
+
+${artifact.content}
+`;
+}
+
+export function renderArtifactBody(artifact: GeneratedArtifact): string {
+  switch (artifact.kind) {
+    case "skill":
+      return renderSkillMarkdown(artifact);
+    case "rule":
+      return renderRuleMdc(artifact);
+    case "hook":
+      return renderHookMarkdown(artifact);
+    case "subagent":
+      return renderSubAgentMarkdown(artifact);
+    default:
+      return `## Tool hint: ${artifact.name}\n\n${artifact.content}`;
+  }
+}
+
 function heuristicArtifacts(transcript: SessionTranscript): GeneratedArtifact[] {
   const patterns = detectSessionPatterns(transcript);
   return patterns
@@ -45,7 +84,7 @@ function heuristicArtifacts(transcript: SessionTranscript): GeneratedArtifact[] 
     }))
     .map((a) => ({
       ...a,
-      rendered: a.kind === "skill" ? renderSkillMarkdown(a) : renderRuleMdc(a),
+      rendered: renderArtifactBody(a),
     }));
 }
 
@@ -86,12 +125,7 @@ export async function generateArtifacts(
     const parsed = JSON.parse(jsonMatch[0]) as GeneratedArtifact[];
     return parsed.map((a) => ({
       ...a,
-      rendered:
-        a.kind === "skill"
-          ? renderSkillMarkdown(a)
-          : a.kind === "rule"
-            ? renderRuleMdc(a)
-            : `## Tool hint: ${a.name}\n\n${a.content}`,
+      rendered: renderArtifactBody(a),
     }));
   } catch {
     return heuristic;

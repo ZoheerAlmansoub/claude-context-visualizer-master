@@ -1,27 +1,87 @@
-import type { AnalyzeType } from "../types.ts";
+import type { AnalyzeType, RecurringPattern, UserMessageStats } from "../types.ts";
+
+export type AnalysisTranscriptContext = {
+  userMessages: string;
+  conversation: string;
+  toolSummary: string;
+  tokenStats: string;
+  loopEvidence: string;
+  patterns: RecurringPattern[];
+  compactionBoundaryIndex: number | null;
+  userMessageStats: UserMessageStats;
+  warnings: string[];
+};
+
+const STRUCTURED_TYPES: AnalyzeType[] = [
+  "token-audit",
+  "loop-diagnosis",
+  "tool-hardening",
+  "artifact-blueprint",
+  "memory-file-drafts",
+  "agent-orchestration",
+];
+
+export function isStructuredAnalysisType(type: AnalyzeType): boolean {
+  return STRUCTURED_TYPES.includes(type);
+}
+
+function sessionMetaBlock(ctx: AnalysisTranscriptContext): string {
+  const lines = [
+    "## Session metadata",
+    `- User messages: ${ctx.userMessageStats.visibleCount} visible / ${ctx.userMessageStats.totalCount} total`,
+    `- Compaction boundary: ${ctx.compactionBoundaryIndex != null ? `turn index ${ctx.compactionBoundaryIndex}` : "none"}`,
+  ];
+  if (ctx.warnings.length) {
+    lines.push(`- Warnings: ${ctx.warnings.join("; ")}`);
+  }
+  if (ctx.patterns.length) {
+    lines.push("", "## Detected patterns (heuristic)", "");
+    for (const p of ctx.patterns) {
+      lines.push(
+        `- **${p.label}** (${p.count}x): ${p.description}. Recommendation: ${p.recommendation}${
+          p.estimatedTokenWaste ? ` [~${p.estimatedTokenWaste} tok waste]` : ""
+        }`,
+      );
+    }
+  }
+  return lines.join("\n");
+}
 
 export function buildAnalysisPrompt(
   type: AnalyzeType,
-  transcript: {
-    userMessages: string;
-    conversation: string;
-    toolSummary: string;
-  },
+  transcript: AnalysisTranscriptContext,
   locale: "ar" | "en" = "en",
 ): { system: string; user: string } {
   const lang = locale === "ar" ? "Arabic" : "English";
-  const system = `You are an expert AI agent session analyst. Respond in ${lang} using clear markdown. Be concise and actionable.`;
+  const structured = isStructuredAnalysisType(type);
+
+  const system = structured
+    ? `You are an expert AI agent session analyst specializing in context optimization, loop prevention, and agent artifact design.
+Respond ONLY with valid JSON (no markdown fences). Use ${lang} for all string values.
+
+Critical rules:
+- Ground every finding in session evidence: cite turn numbers, tool names, and patterns from the context below.
+- Do NOT invent problems not supported by the transcript or detected patterns.
+- Prioritize items that prevent repeated mistakes and reduce token waste.
+- When heuristic patterns are listed, address each relevant one explicitly.
+- Prefer high-confidence recommendations backed by multiple occurrences.`
+    : `You are an expert AI agent session analyst. Respond in ${lang} using clear markdown. Be concise and actionable. Ground claims in session evidence.`;
 
   const context = [
+    sessionMetaBlock(transcript),
+    transcript.tokenStats,
+    transcript.loopEvidence,
     "## User messages",
     transcript.userMessages,
     "## Conversation (user + assistant)",
-    transcript.conversation.slice(0, 80_000),
+    transcript.conversation,
     "## Tool events summary",
     transcript.toolSummary,
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
-  const prompts: Record<AnalyzeType, string> = {
+  const markdownPrompts: Partial<Record<AnalyzeType, string>> = {
     summarize: `Summarize this agent session:
 - User goals and constraints
 - Key decisions made
@@ -45,11 +105,123 @@ export function buildAnalysisPrompt(
 - Failures, loops, wasted tool calls
 - Token/context waste sources
 - Concrete recommendations to improve future sessions`,
+
+    "agentic-lessons": `Write an educational agentic engineering report from this session:
+- 3–5 principles extracted (orchestration, state, failure recovery)
+- Anti-patterns observed and a better pattern for each
+- What to practice next for building agent systems and automation
+- Recommended reading or practices (no invented citations)`,
   };
+
+  const jsonPrompts: Partial<Record<AnalyzeType, string>> = {
+    "token-audit": `Audit token/context waste in this session. Respond with JSON:
+{
+  "summary": "2-4 sentence overview",
+  "wasteItems": [
+    {
+      "source": "reads|tool_results|thinking|attachments|retries|other",
+      "description": "what wasted context",
+      "estimatedImpact": "low|medium|high",
+      "recommendation": "specific fix",
+      "turns": [1, 2]
+    }
+  ]
+}
+Include top waste sources, duplications (same file/grep), and savings tactics (semantic search, batch reads, summarize-before-inject).
+Use token statistics and heuristic patterns as quantitative anchors. Include at least 3 wasteItems when evidence exists.`,
+
+    "loop-diagnosis": `Diagnose retry/loop patterns in tool usage. Respond with JSON:
+{
+  "summary": "overview of loops found",
+  "preventionRules": [
+    {
+      "kind": "rule",
+      "name": "short-name",
+      "description": "what this prevents",
+      "trigger": "when to apply",
+      "content": "full rule text for .mdc file",
+      "sourceTurns": [1],
+      "confidence": "high|medium|low"
+    }
+  ]
+}
+For each loop: trigger → attempts → failure mode → root cause → stop condition.
+Include at least one preventionRule per detected loop/error pattern. Rules must be copy-paste ready for .cursor/rules/*.mdc.`,
+
+    "tool-hardening": `Harden tools against repeated failures. Respond with JSON:
+{
+  "summary": "overview",
+  "toolHints": [
+    {
+      "kind": "tool-hint",
+      "name": "ToolName-hardening",
+      "description": "failure signature and fix",
+      "trigger": "before calling this tool",
+      "content": "pre-checks, safe retry policy, common error fixes",
+      "sourceTurns": [],
+      "confidence": "high|medium|low"
+    }
+  ]
+}
+One entry per tool with repeated errors. Include rules entries where a persistent .mdc rule is better.
+Address every tool with 2+ errors in the session.`,
+
+    "artifact-blueprint": `Propose Cursor agent artifacts from this session. Respond with JSON:
+{
+  "summary": "overview",
+  "artifacts": [
+    {
+      "kind": "skill|rule|tool-hint|hook|subagent",
+      "name": "name",
+      "description": "purpose",
+      "trigger": "when to use",
+      "content": "full artifact body",
+      "sourceTurns": [],
+      "confidence": "high|medium|low"
+    }
+  ]
+}
+Prioritize high-confidence items that prevent repeated mistakes or encode user preferences.
+Limit to 8 artifacts max; quality over quantity.`,
+
+    "memory-file-drafts": `Draft memory/context files for future agents. Respond with JSON:
+{
+  "summary": "overview",
+  "files": [
+    {
+      "path": "AGENTS.md|agent.md|claude.md|design.md|.cursor/rules/example.mdc",
+      "purpose": "why this file",
+      "action": "create|update|append",
+      "rationale": "why needed from this session",
+      "content": "full file content ready to save"
+    }
+  ]
+}
+Only include files justified by session evidence. Each content field must be complete and ready to save.`,
+
+    "agent-orchestration": `Design multi-agent orchestration for similar future work. Respond with JSON:
+{
+  "summary": "when single agent vs multi-agent",
+  "whenSwarm": "conditions for swarm/parallel sub-agents",
+  "agents": [
+    {
+      "name": "agent-name",
+      "role": "specialist role",
+      "whenToUse": "delegation trigger",
+      "contextBudget": "what context this agent needs",
+      "handoffPoints": "what to pass back",
+      "tools": ["tool1", "tool2"],
+      "confidence": "high|medium|low"
+    }
+  ]
+}`,
+  };
+
+  const instruction = structured ? jsonPrompts[type]! : markdownPrompts[type]!;
 
   return {
     system,
-    user: `${prompts[type]}\n\n---\n\n${context}`,
+    user: `${instruction}\n\n---\n\n${context}`,
   };
 }
 

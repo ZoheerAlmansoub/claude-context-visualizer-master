@@ -1,5 +1,6 @@
 import type { LLMProvider, LlmRequest, LlmResponse } from "./provider.ts";
 import { getLlmConfig } from "../config.ts";
+import { llmFetch } from "./http.ts";
 
 export class NvidiaProvider implements LLMProvider {
   id = "nvidia";
@@ -10,7 +11,7 @@ export class NvidiaProvider implements LLMProvider {
     if (!key) throw new Error("NVIDIA_API_KEY not configured");
 
     const base = cfg.nvidiaApiUrl.replace(/\/$/, "");
-    const res = await fetch(`${base}/chat/completions`, {
+    const res = await llmFetch(`${base}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -27,6 +28,12 @@ export class NvidiaProvider implements LLMProvider {
 
     if (!res.ok) {
       const err = await res.text();
+      if (res.status === 504) {
+        throw new Error(
+          `NVIDIA API gateway timeout (504) — the model did not finish within ~5 minutes. ` +
+            `Use a faster model, enable compact analysis, or shorten the session. ${err}`.trim(),
+        );
+      }
       throw new Error(`NVIDIA API error ${res.status}: ${err}`);
     }
 
