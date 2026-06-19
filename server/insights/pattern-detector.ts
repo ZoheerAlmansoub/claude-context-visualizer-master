@@ -1,6 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
 import type { SessionTranscript, RecurringPattern } from "../types.ts";
+import { enrichPatternWithArtifact } from "../artifacts/templates.ts";
+
+export { writeArtifactFile, applyArtifactPack, writeWithMerge } from "../artifacts/write.ts";
 
 export type DetectedPattern = RecurringPattern;
 
@@ -115,7 +116,7 @@ export function detectSessionPatterns(transcript: SessionTranscript): DetectedPa
     });
   }
 
-  return patterns;
+  return patterns.map((p) => enrichPatternWithArtifact(p, transcript.agent));
 }
 
 export function mergePatterns(existing: DetectedPattern[], incoming: DetectedPattern[]): DetectedPattern[] {
@@ -133,13 +134,3 @@ export function mergePatterns(existing: DetectedPattern[], incoming: DetectedPat
   return [...map.values()].sort((a, b) => b.count - a.count);
 }
 
-export async function writeArtifactFile(targetPath: string, content: string): Promise<void> {
-  const resolved = resolve(targetPath);
-  const home = resolve(process.env.HOME || process.env.USERPROFILE || "");
-  if (home && !resolved.startsWith(home) && !resolved.includes(".cursor")) {
-    throw new Error("Path must be under home directory or .cursor");
-  }
-  if (resolved.includes("..")) throw new Error("Path traversal not allowed");
-  await mkdir(dirname(resolved), { recursive: true });
-  await writeFile(resolved, content, "utf8");
-}

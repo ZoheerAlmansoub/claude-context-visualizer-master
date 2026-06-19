@@ -13,7 +13,7 @@ function insightsCachePath(agent: AgentKind, project: string): string {
 export async function getProjectInsights(
   agent: AgentKind,
   project: string,
-  opts: { refresh?: boolean; limit?: number } = {},
+  opts: { refresh?: boolean; limit?: number; scanLimit?: number } = {},
 ): Promise<RecurringPattern[]> {
   const cachePath = insightsCachePath(agent, project);
   if (!opts.refresh) {
@@ -25,7 +25,7 @@ export async function getProjectInsights(
 
   const sessions = await listSessions(project, agent);
   let patterns: RecurringPattern[] = [];
-  const scanLimit = Math.min(sessions.length, 30);
+  const scanLimit = Math.min(sessions.length, opts.scanLimit ?? 50);
 
   for (const session of sessions.slice(0, scanLimit)) {
     try {

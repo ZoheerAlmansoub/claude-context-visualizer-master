@@ -28,6 +28,7 @@ export const ANALYSIS_TYPE_CATEGORIES: Record<
   loops: { label: "Loops & tools", labelAr: "الحلقات والأدوات" },
   artifacts: { label: "Artifacts & memory", labelAr: "Artifacts والذاكرة" },
   learning: { label: "Learning", labelAr: "التعلّم" },
+  governance: { label: "Governance", labelAr: "الحوكمة" },
 };
 
 export const ANALYSIS_TYPES: Array<{
@@ -101,6 +102,54 @@ export const ANALYSIS_TYPES: Array<{
     label: "Agentic lessons",
     description: "Principles and patterns for agentic engineering",
     category: "learning",
+  },
+  {
+    id: "project-health-report",
+    label: "Project health report",
+    description: "Cross-session root causes, health score, and risks",
+    category: "governance",
+  },
+  {
+    id: "user-ai-fluency",
+    label: "User AI fluency",
+    description: "Assess how effectively the user directs AI agents",
+    category: "governance",
+  },
+  {
+    id: "user-growth-plan",
+    label: "User growth plan",
+    description: "Cross-session plan to improve AI collaboration skills",
+    category: "governance",
+  },
+  {
+    id: "memory-diff",
+    label: "Memory diff",
+    description: "Compare proposed memory updates against files on disk",
+    category: "governance",
+  },
+  {
+    id: "rule-dedup",
+    label: "Rule deduplication",
+    description: "Merge or skip rules that duplicate existing project rules",
+    category: "governance",
+  },
+  {
+    id: "compaction-recovery",
+    label: "Compaction recovery",
+    description: "Recover context lost after compaction and prevent repeat loss",
+    category: "context",
+  },
+  {
+    id: "mcp-tool-audit",
+    label: "MCP tool audit",
+    description: "Audit MCP tool usage: errors, redundancy, and hardening",
+    category: "loops",
+  },
+  {
+    id: "project-synthesis",
+    label: "Project synthesis",
+    description: "Cross-session themes, decisions, memory gaps, and drift",
+    category: "governance",
   },
 ];
 

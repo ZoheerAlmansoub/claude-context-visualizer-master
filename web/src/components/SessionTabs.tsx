@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type DetailTab = "context" | "messages" | "analysis" | "artifacts" | "insights";
+export type DetailTab = "context" | "messages" | "analysis" | "artifacts" | "insights" | "dashboard" | "governance";
 
 type Props = {
   active: DetailTab;
@@ -13,6 +13,8 @@ const TABS: Array<{ id: DetailTab; label: string }> = [
   { id: "analysis", label: "Analysis" },
   { id: "artifacts", label: "Artifacts" },
   { id: "insights", label: "Insights" },
+  { id: "dashboard", label: "Dashboard" },
+  { id: "governance", label: "Governance" },
 ];
 
 export function SessionTabs({ active, onChange }: Props): ReactNode {

@@ -70,14 +70,32 @@ export function decodePiProjectSlug(slug: string): string {
   return parts.join("\\");
 }
 
-export function decodeCursorProjectSlug(slug: string): string {
-  // e.g. d-dev-ERP-SAP -> D:/dev/ERP-SAP (best-effort label)
+/** Candidate paths for a Cursor project slug (hyphens may be separators or folder names). */
+export function cursorProjectPathCandidates(slug: string): string[] {
   const parts = slug.split("-");
-  if (parts.length >= 2 && /^[a-z]$/i.test(parts[0]!)) {
-    const drive = parts[0]!.toUpperCase();
-    return `${drive}:/${parts.slice(1).join("/")}`;
+  if (parts.length < 2 || !/^[a-z]$/i.test(parts[0]!)) {
+    return [slug.replace(/-/g, "/")];
   }
-  return slug.replace(/-/g, "/");
+  const drive = parts[0]!.toUpperCase();
+  const rest = parts.slice(1);
+  const candidates: string[] = [];
+
+  if (rest.length === 1) {
+    candidates.push(`${drive}:/${rest[0]}`);
+  } else {
+    // d-dev-claude-context-visualizer-master -> D:/dev/claude-context-visualizer-master
+    candidates.push(`${drive}:/${rest[0]}/${rest.slice(1).join("-")}`);
+    // e-MyDev-Hospitix-Hospitix -> E:/MyDev/Hospitix/Hospitix
+    candidates.push(`${drive}:/${rest.join("/")}`);
+    if (rest.length >= 3) {
+      candidates.push(`${drive}:/${rest[0]}/${rest[1]}/${rest.slice(2).join("-")}`);
+    }
+  }
+  return [...new Set(candidates)];
+}
+
+export function decodeCursorProjectSlug(slug: string): string {
+  return cursorProjectPathCandidates(slug)[0] ?? slug;
 }
 
 export function decodeProjectSlugForAgent(agent: AgentKind, slug: string): string {

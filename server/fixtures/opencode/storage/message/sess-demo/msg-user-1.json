@@ -1,0 +1,8 @@
+{
+  "id": "msg-user-1",
+  "sessionID": "sess-demo",
+  "role": "user",
+  "time": { "created": 1700000001000 },
+  "agent": "build",
+  "model": { "providerID": "anthropic", "modelID": "claude-sonnet-4" }
+}

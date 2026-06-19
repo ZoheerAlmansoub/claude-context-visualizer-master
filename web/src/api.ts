@@ -103,9 +103,23 @@ export type AnalyzeType =
   | "artifact-blueprint"
   | "memory-file-drafts"
   | "agent-orchestration"
-  | "agentic-lessons";
+  | "agentic-lessons"
+  | "project-health-report"
+  | "user-ai-fluency"
+  | "user-growth-plan"
+  | "memory-diff"
+  | "rule-dedup"
+  | "compaction-recovery"
+  | "mcp-tool-audit"
+  | "project-synthesis";
 
-export type AnalysisCategory = "overview" | "context" | "loops" | "artifacts" | "learning";
+export type AnalysisCategory =
+  | "overview"
+  | "context"
+  | "loops"
+  | "artifacts"
+  | "learning"
+  | "governance";
 
 export type ArtifactKind = "skill" | "rule" | "tool-hint" | "hook" | "subagent";
 
@@ -146,6 +160,71 @@ export type GeneratedArtifact = {
   confidence: "high" | "medium" | "low";
 };
 
+export type RootCauseItem = {
+  id: string;
+  category: string;
+  title: string;
+  impact: "critical" | "high" | "medium" | "low";
+  description: string;
+  sessionIds: string[];
+  estimatedTokenWaste?: number;
+  fixPriority: number;
+  recommendation: string;
+};
+
+export type FluencyDimension = {
+  id: string;
+  label: string;
+  score: number;
+  evidence: string;
+  examples: Array<{ turn: number; quote: string }>;
+};
+
+export type GrowthArea = {
+  area: string;
+  whyItMatters: string;
+  concreteActions: string[];
+  suggestedRule?: string;
+  suggestedSkill?: string;
+  practiceExercise?: string;
+};
+
+export type MemoryDiffItem = {
+  path: string;
+  action: "create" | "update" | "append" | "skip";
+  existingSummary: string;
+  proposedSummary: string;
+  diffPreview: string;
+  rationale: string;
+};
+
+export type RuleDedupItem = {
+  name: string;
+  proposedPath: string;
+  existingPath?: string;
+  action: "create" | "merge" | "replace" | "skip";
+  rationale: string;
+  content: string;
+};
+
+export type CompactionRecoveryItem = {
+  priority: "critical" | "high" | "medium";
+  action: string;
+  rationale: string;
+  suggestedMemoryPath?: string;
+  suggestedContent?: string;
+};
+
+export type McpToolFinding = {
+  toolName: string;
+  callCount: number;
+  errorCount: number;
+  severity: "critical" | "high" | "medium" | "low";
+  pattern: string;
+  recommendation: string;
+  turns: number[];
+};
+
 export type StructuredAnalysis =
   | { kind: "token-audit"; wasteItems: TokenWasteItem[]; summary: string }
   | { kind: "prevention-rules"; rules: GeneratedArtifact[]; summary: string }
@@ -156,6 +235,39 @@ export type StructuredAnalysis =
       agents: SubAgentSpec[];
       summary: string;
       whenSwarm: string;
+    }
+  | { kind: "project-health"; healthScore: number; rootCauses: RootCauseItem[]; summary: string; openRisks: string[] }
+  | {
+      kind: "user-fluency";
+      overallScore: number;
+      dimensions: FluencyDimension[];
+      strengths: string[];
+      growthAreas: GrowthArea[];
+      summary: string;
+    }
+  | {
+      kind: "user-growth";
+      overallScore: number;
+      weeklyPlan: Array<{ day: string; focus: string; task: string }>;
+      growthAreas: GrowthArea[];
+      summary: string;
+    }
+  | { kind: "memory-diff"; items: MemoryDiffItem[]; summary: string }
+  | { kind: "rule-dedup"; items: RuleDedupItem[]; summary: string }
+  | {
+      kind: "compaction-recovery";
+      recoveryItems: CompactionRecoveryItem[];
+      summary: string;
+      boundaryTurn?: number;
+    }
+  | { kind: "mcp-tool-audit"; findings: McpToolFinding[]; summary: string }
+  | {
+      kind: "project-synthesis";
+      themes: Array<{ id: string; title: string; sessions: string[]; summary: string; status: string }>;
+      decisions: Array<{ decision: string; rationale: string; sessionIds: string[] }>;
+      memoryGaps: Array<{ path: string; gap: string; suggestedAction: string }>;
+      driftWarnings: string[];
+      summary: string;
     };
 
 export type AnalysisSource = "llm" | "heuristic" | "hybrid";
@@ -215,6 +327,51 @@ export type LlmProviderKind =
   | "deepseek"
   | "ollama"
   | "nvidia";
+
+export type GovernancePipelineMode = "quick" | "standard" | "full";
+
+export type GovernancePipelineStatus = "running" | "complete" | "cancelled" | "error";
+
+export type GovernancePipelineResult = {
+  pipelineId: string;
+  scope: "session" | "project";
+  mode?: GovernancePipelineMode;
+  status?: GovernancePipelineStatus;
+  cancelled?: boolean;
+  steps: Array<{
+    type: AnalyzeType;
+    status: "pending" | "running" | "done" | "error" | "skipped";
+    analysisId?: string;
+    error?: string;
+  }>;
+  playbookMarkdown?: string;
+  projectRoot?: string;
+  applyResults?: Array<{ path: string; ok: boolean; error?: string }>;
+};
+
+export type ProjectContextSummary = {
+  projectRoot: string;
+  verified: boolean;
+  source: string;
+  warning?: string;
+  inventoryHash: string;
+  files: Array<{ relativePath: string; sizeBytes: number; hash: string; truncated: boolean }>;
+};
+
+export type ProjectContextResponse = {
+  projectRoot: string;
+  verified: boolean;
+  source: string;
+  warning?: string;
+  inventoryHash: string;
+  files: Array<{
+    relativePath: string;
+    sizeBytes: number;
+    hash: string;
+    truncated: boolean;
+    content: string;
+  }>;
+};
 
 export type RecurringPattern = {
   id: string;
@@ -393,8 +550,96 @@ export const api = {
     get<{ patterns: RecurringPattern[] }>(
       `/api/insights/recurring?agent=${encodeURIComponent(agent)}&project=${encodeURIComponent(project)}&refresh=${refresh}`,
     ),
-  writeArtifact: (path: string, content: string) =>
-    post<{ ok: boolean; path: string }>("/api/artifacts/write", { path, content }),
+  writeArtifact: (
+    path: string,
+    content: string,
+    opts?: { projectRoot?: string; action?: "create" | "update" | "append" },
+  ) =>
+    post<{ ok: boolean; path: string; merged?: boolean }>("/api/artifacts/write", {
+      path,
+      content,
+      ...opts,
+    }),
+  applyArtifactPack: (
+    items: Array<{
+      path: string;
+      content: string;
+      action?: "create" | "update" | "append";
+      selected?: boolean;
+    }>,
+    projectRoot?: string,
+  ) =>
+    post<{ results: Array<{ path: string; ok: boolean; error?: string }> }>(
+      "/api/artifacts/apply-pack",
+      { items, projectRoot },
+    ),
+  projectContext: (agent: AgentKind, project: string, cwd?: string) =>
+    get<ProjectContextResponse>(
+      `/api/projects/${encodeURIComponent(project)}/context?agent=${encodeURIComponent(agent)}${cwd ? `&cwd=${encodeURIComponent(cwd)}` : ""}`,
+    ),
+  projectContextSummary: (agent: AgentKind, project: string, cwd?: string) =>
+    get<ProjectContextSummary>(
+      `/api/projects/${encodeURIComponent(project)}/context/summary?agent=${encodeURIComponent(agent)}${cwd ? `&cwd=${encodeURIComponent(cwd)}` : ""}`,
+    ),
+  projectDashboard: (agent: AgentKind, project: string, cwd?: string) =>
+    get<{
+      context: ProjectContextSummary;
+      patterns: RecurringPattern[];
+      sessions: Array<{ id: string; title: string; mtimeMs: number; realTotal: number | null; hasCompaction: boolean }>;
+      schedule: { lastRunAt: string | null; lastSessionCount: number; minNewSessions: number };
+      eligibility: { eligible: boolean; newSessions: number; reason: string };
+    }>(
+      `/api/projects/${encodeURIComponent(project)}/dashboard?agent=${encodeURIComponent(agent)}${cwd ? `&cwd=${encodeURIComponent(cwd)}` : ""}`,
+    ),
+  governEligible: (agent: AgentKind, project: string) =>
+    get<{ eligible: boolean; newSessions: number; reason: string; sessionCount: number }>(
+      `/api/projects/${encodeURIComponent(project)}/govern/eligible?agent=${encodeURIComponent(agent)}`,
+    ),
+  getGovernancePipeline: (pipelineId: string) =>
+    get<GovernancePipelineResult>(`/api/governance/${encodeURIComponent(pipelineId)}`),
+  cancelGovernancePipeline: (pipelineId: string) =>
+    post<GovernancePipelineResult>(`/api/governance/${encodeURIComponent(pipelineId)}/cancel`, {}),
+  resumeGovernancePipeline: (pipelineId: string) =>
+    post<GovernancePipelineResult>(`/api/governance/${encodeURIComponent(pipelineId)}/resume`, {}),
+  governSession: (
+    agent: AgentKind,
+    sessionId: string,
+    body?: {
+      provider?: LlmProviderKind;
+      model?: string;
+      locale?: "ar" | "en";
+      force?: boolean;
+      mode?: GovernancePipelineMode;
+      autoApply?: boolean;
+    },
+  ) =>
+    post<GovernancePipelineResult>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/govern?agent=${encodeURIComponent(agent)}`,
+      body ?? {},
+    ),
+  governProject: (
+    agent: AgentKind,
+    project: string,
+    body?: {
+      provider?: LlmProviderKind;
+      model?: string;
+      locale?: "ar" | "en";
+      force?: boolean;
+      mode?: GovernancePipelineMode;
+      autoApply?: boolean;
+    },
+  ) =>
+    post<GovernancePipelineResult>(
+      `/api/projects/${encodeURIComponent(project)}/govern?agent=${encodeURIComponent(agent)}`,
+      body ?? {},
+    ),
+  fetchPlaybook: (agent: AgentKind, project: string, opts?: { save?: boolean; refresh?: boolean }) =>
+    fetch(
+      `/api/projects/${encodeURIComponent(project)}/playbook?agent=${encodeURIComponent(agent)}&save=${opts?.save ? "true" : "false"}&refresh=${opts?.refresh ? "true" : "false"}`,
+    ).then(async (r) => {
+      if (!r.ok) throw new Error(await r.text());
+      return r.text();
+    }),
 };
 
 export async function copyText(text: string): Promise<void> {

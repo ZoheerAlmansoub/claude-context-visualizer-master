@@ -10,8 +10,10 @@ import {
   type AnalyzeType,
   type LlmConfig,
   type LlmProviderKind,
+  type SessionListItem,
 } from "../api";
 import {
+  CATEGORY_ORDER,
   FALLBACK_ANALYSIS_TYPES,
   groupAnalysisTypes,
   isStaleAnalysisTypesResponse,
@@ -22,19 +24,13 @@ import { ActionButton } from "./ui/ActionButton";
 import { AnalysisLoadingState } from "./ui/AnalysisLoadingState";
 import { AnalysisResultCards } from "./ui/AnalysisResultCards";
 import { RecordLog } from "./ui/RecordLog";
+import { AnalysisPipelineWizard } from "./AnalysisPipelineWizard";
 
 type Props = {
   agent: AgentKind;
   sessionId: string;
+  session?: SessionListItem;
 };
-
-const CATEGORY_ORDER: AnalysisCategory[] = [
-  "overview",
-  "context",
-  "loops",
-  "artifacts",
-  "learning",
-];
 
 const CATEGORY_LABELS: Record<AnalysisCategory, { en: string; ar: string }> = {
   overview: { en: "Overview", ar: "نظرة عامة" },
@@ -42,6 +38,7 @@ const CATEGORY_LABELS: Record<AnalysisCategory, { en: string; ar: string }> = {
   loops: { en: "Loops & tools", ar: "الحلقات والأدوات" },
   artifacts: { en: "Artifacts & memory", ar: "Artifacts والذاكرة" },
   learning: { en: "Learning", ar: "التعلّم" },
+  governance: { en: "Governance", ar: "الحوكمة" },
 };
 
 function fmtDate(iso: string): string {
@@ -62,7 +59,7 @@ function typeLabel(config: LlmConfig | null, type: AnalyzeType): string {
   return types.find((t) => t.id === type)?.label ?? type;
 }
 
-export function AnalysisPanel({ agent, sessionId }: Props) {
+export function AnalysisPanel({ agent, sessionId, session }: Props) {
   const [config, setConfig] = useState<LlmConfig | null>(null);
   const [type, setType] = useState<AnalyzeType>("summarize");
   const [provider, setProvider] = useState<LlmProviderKind>("anthropic");
@@ -231,12 +228,23 @@ export function AnalysisPanel({ agent, sessionId }: Props) {
         copiedId={copiedId}
         onCopy={handleCopy}
         locale={locale}
+        agent={agent}
+        projectRoot={session?.projectPath}
       />
     </div>
   );
 
   return (
     <div className="panel analysis-panel">
+      {session && (
+        <AnalysisPipelineWizard
+          agent={agent}
+          session={session}
+          provider={provider}
+          model={config?.defaultModel ?? ""}
+          locale={locale}
+        />
+      )}
       <div className="panel-toolbar">
         <div className="panel-form">
           <select

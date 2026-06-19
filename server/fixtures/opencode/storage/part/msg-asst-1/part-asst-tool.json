@@ -1,0 +1,15 @@
+{
+  "id": "part-asst-tool",
+  "sessionID": "sess-demo",
+  "messageID": "msg-asst-1",
+  "type": "tool",
+  "callID": "call-read-1",
+  "tool": "Read",
+  "state": {
+    "status": "completed",
+    "input": { "path": "src/auth.ts" },
+    "output": "export function auth() {}",
+    "title": "Read auth.ts",
+    "time": { "start": 1700000002500, "end": 1700000002600 }
+  }
+}

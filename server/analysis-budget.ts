@@ -1,6 +1,7 @@
-import type { AnalyzeType, LlmProviderKind, SessionTranscript } from "./types.ts";
+import type { AnalyzeType, LlmProviderKind, SessionTranscript, AgentKind } from "./types.ts";
 import type { AnalysisTranscriptContext } from "./llm/prompts.ts";
 import { detectSessionPatterns } from "./insights/pattern-detector.ts";
+import type { ProjectContextSnapshot } from "./project-context.ts";
 import {
   buildEnrichedToolSummary,
   buildLoopEvidenceBlock,
@@ -21,6 +22,13 @@ const HEURISTIC_FALLBACK_TYPES = new Set<AnalyzeType>([
   "token-audit",
   "loop-diagnosis",
   "tool-hardening",
+  "artifact-blueprint",
+  "memory-file-drafts",
+  "memory-diff",
+  "rule-dedup",
+  "compaction-recovery",
+  "mcp-tool-audit",
+  "project-synthesis",
 ]);
 
 export function supportsHeuristicFallback(type: AnalyzeType): boolean {
@@ -67,7 +75,13 @@ export function contextLimitsFor(
       case "artifact-blueprint":
       case "memory-file-drafts":
       case "agent-orchestration":
+      case "memory-diff":
+      case "rule-dedup":
         return { ...ultraBase, userMessages: 1_800, conversation: 1_400, maxTokens: 1024 };
+      case "project-health-report":
+      case "user-ai-fluency":
+      case "user-growth-plan":
+        return { ...ultraBase, userMessages: 2_000, conversation: 1_600, maxTokens: 1280 };
       case "agentic-lessons":
       case "summarize":
       case "intent-map":
@@ -122,7 +136,18 @@ export function contextLimitsFor(
     case "artifact-blueprint":
     case "memory-file-drafts":
     case "agent-orchestration":
+    case "memory-diff":
+    case "rule-dedup":
       return artifactHeavy;
+    case "project-health-report":
+    case "user-ai-fluency":
+    case "user-growth-plan":
+      return {
+        ...artifactHeavy,
+        userMessages: compact ? 5_000 : gw ? 10_000 : 20_000,
+        conversation: compact ? 4_000 : gw ? 8_000 : 18_000,
+        maxTokens: compact ? 1536 : gw ? 2048 : 4096,
+      };
     default:
       return markdown;
   }
@@ -165,6 +190,10 @@ export function buildAnalysisTranscriptContext(
   transcript: SessionTranscript,
   type: AnalyzeType,
   limits: AnalysisContextLimits,
+  extras: {
+    projectContext?: ProjectContextSnapshot;
+    crossSessionPatterns?: string;
+  } = {},
 ): AnalysisTranscriptContext {
   const patterns = detectSessionPatterns(transcript);
 
@@ -187,6 +216,9 @@ export function buildAnalysisTranscriptContext(
     compactionBoundaryIndex: transcript.compactionBoundaryIndex,
     userMessageStats: transcript.userMessageStats,
     warnings: transcript.warnings,
+    projectContext: extras.projectContext?.contextBlock,
+    agentKind: transcript.agent,
+    crossSessionPatterns: extras.crossSessionPatterns,
   };
 }
 

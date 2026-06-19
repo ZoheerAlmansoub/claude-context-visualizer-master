@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  type AgentKind,
   type AnalysisSource,
   type AnalyzeResult,
   type GeneratedArtifact,
@@ -24,12 +25,16 @@ import {
 } from "../../api";
 import { ActionButton } from "./ActionButton";
 import { MarkdownView } from "./MarkdownView";
+import { ApplyPackPanel } from "./ApplyPackPanel";
+import { collectFromAnalysisResult } from "../../lib/apply-pack";
 
 type Props = {
   result: AnalyzeResult;
   copiedId: string | null;
   onCopy: (id: string, text: string) => void;
   locale: "ar" | "en";
+  agent?: AgentKind;
+  projectRoot?: string;
 };
 
 const LABELS = {
@@ -118,6 +123,7 @@ function WasteTable({ items, L }: { items: TokenWasteItem[]; L: LabelSet }) {
             <th>{L.impact}</th>
             <th>{L.description}</th>
             <th>{L.recommendation}</th>
+            <th>Turns</th>
           </tr>
         </thead>
         <tbody>
@@ -131,6 +137,7 @@ function WasteTable({ items, L }: { items: TokenWasteItem[]; L: LabelSet }) {
               </td>
               <td>{w.description}</td>
               <td>{w.recommendation}</td>
+              <td>{w.turns?.length ? w.turns.join(", ") : "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -139,17 +146,25 @@ function WasteTable({ items, L }: { items: TokenWasteItem[]; L: LabelSet }) {
   );
 }
 
-function defaultArtifactPath(artifact: GeneratedArtifact): string {
+function defaultArtifactPath(artifact: GeneratedArtifact, agent: AgentKind = "cursor"): string {
   const slug = artifact.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   switch (artifact.kind) {
     case "skill":
+      if (agent === "claude") return `.claude/skills/${slug}/SKILL.md`;
+      if (agent === "pi") return `.pi/skills/${slug}/SKILL.md`;
+      if (agent === "opencode") return `.opencode/skills/${slug}/SKILL.md`;
       return `~/.cursor/skills/${slug}/SKILL.md`;
     case "rule":
+      if (agent === "claude") return `.claude/rules/${slug}.md`;
+      if (agent === "opencode") return `.opencode/rules/${slug}.md`;
+      if (agent === "pi") return `AGENTS.md`;
       return `.cursor/rules/${slug}.mdc`;
     case "hook":
+      if (agent === "claude") return `.claude/hooks/${slug}.md`;
       return `.cursor/hooks/${slug}.md`;
     case "subagent":
-      return `.cursor/agents/${slug}.md`;
+      if (agent === "cursor") return `.cursor/agents/${slug}.md`;
+      return `docs/agents/${slug}.md`;
     default:
       return "";
   }
@@ -161,22 +176,26 @@ function ArtifactCard({
   copiedId,
   onCopy,
   L,
+  agent = "cursor",
+  projectRoot,
 }: {
   artifact: GeneratedArtifact;
   id: string;
   copiedId: string | null;
   onCopy: (id: string, text: string) => void;
   L: LabelSet;
+  agent?: AgentKind;
+  projectRoot?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [savePath, setSavePath] = useState(defaultArtifactPath(artifact));
+  const [savePath, setSavePath] = useState(defaultArtifactPath(artifact, agent));
   const body = artifact.rendered ?? artifact.content;
 
   const save = async () => {
     const path = savePath.trim() || prompt("Enter full file path:", "")?.trim();
     if (!path) return;
     try {
-      await api.writeArtifact(path, body);
+      await api.writeArtifact(path, body, { projectRoot });
       alert(`Saved to ${path}`);
     } catch (e) {
       alert(String(e));
@@ -230,12 +249,14 @@ function MemoryFileCard({
   copiedId,
   onCopy,
   L,
+  projectRoot,
 }: {
   file: MemoryFileDraft;
   id: string;
   copiedId: string | null;
   onCopy: (id: string, text: string) => void;
   L: LabelSet;
+  projectRoot?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [savePath, setSavePath] = useState(file.path);
@@ -247,7 +268,10 @@ function MemoryFileCard({
       return;
     }
     try {
-      await api.writeArtifact(path, file.content);
+      await api.writeArtifact(path, file.content, {
+        projectRoot,
+        action: file.action === "create" ? undefined : file.action,
+      });
       alert(`Saved to ${path}`);
     } catch (e) {
       alert(String(e));
@@ -293,7 +317,44 @@ function MemoryFileCard({
   );
 }
 
-function SubAgentCard({ agent, L }: { agent: SubAgentSpec; L: LabelSet }) {
+function SubAgentCard({
+  agent,
+  L,
+  agentKind = "cursor",
+  projectRoot,
+}: {
+  agent: SubAgentSpec;
+  L: LabelSet;
+  agentKind?: AgentKind;
+  projectRoot?: string;
+}) {
+  const slug = agent.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const defaultPath = defaultArtifactPath(
+    {
+      kind: "subagent",
+      name: agent.name,
+      description: agent.role,
+      trigger: agent.whenToUse,
+      content: `# ${agent.name}\n\n**Role:** ${agent.role}\n\n**When:** ${agent.whenToUse}\n\n**Context:** ${agent.contextBudget}\n\n**Handoff:** ${agent.handoffPoints}\n\n**Tools:** ${agent.tools.join(", ")}`,
+      sourceTurns: [],
+      confidence: agent.confidence,
+    },
+    agentKind,
+  );
+  const [savePath, setSavePath] = useState(defaultPath);
+
+  const save = async () => {
+    const path = savePath.trim();
+    if (!path) return;
+    const body = `# Sub-agent: ${agent.name}\n\n**Role:** ${agent.role}\n\n**When:** ${agent.whenToUse}\n\n**Context:** ${agent.contextBudget}\n\n**Handoff:** ${agent.handoffPoints}\n\n**Tools:** ${agent.tools.join(", ")}`;
+    try {
+      await api.writeArtifact(path, body, { projectRoot });
+      alert(`Saved to ${path}`);
+    } catch (e) {
+      alert(String(e));
+    }
+  };
+
   return (
     <article className="artifact-card analysis-artifact-card">
       <div className="artifact-header">
@@ -318,6 +379,17 @@ function SubAgentCard({ agent, L }: { agent: SubAgentSpec; L: LabelSet }) {
           <strong>{L.tools}:</strong> {agent.tools.join(", ") || "—"}
         </li>
       </ul>
+      <div className="panel-actions">
+        <ActionButton variant="ghost" icon={Download} onClick={save}>
+          {L.save}
+        </ActionButton>
+      </div>
+      <input
+        type="text"
+        className="analysis-save-path-input"
+        value={savePath}
+        onChange={(e) => setSavePath(e.target.value)}
+      />
     </article>
   );
 }
@@ -328,12 +400,16 @@ function StructuredBody({
   copiedId,
   onCopy,
   L,
+  agent = "cursor",
+  projectRoot,
 }: {
   structured: StructuredAnalysis;
   prefix: string;
   copiedId: string | null;
   onCopy: (id: string, text: string) => void;
   L: LabelSet;
+  agent?: AgentKind;
+  projectRoot?: string;
 }) {
   switch (structured.kind) {
     case "token-audit":
@@ -383,6 +459,8 @@ function StructuredBody({
                   copiedId={copiedId}
                   onCopy={onCopy}
                   L={L}
+                  agent={agent}
+                  projectRoot={projectRoot}
                 />
               ))}
             </div>
@@ -415,6 +493,7 @@ function StructuredBody({
                   copiedId={copiedId}
                   onCopy={onCopy}
                   L={L}
+                  projectRoot={projectRoot}
                 />
               ))}
             </div>
@@ -444,10 +523,192 @@ function StructuredBody({
             </h4>
             <div className="artifact-list">
               {structured.agents.map((a, i) => (
-                <SubAgentCard key={`${a.name}-${i}`} agent={a} L={L} />
+                <SubAgentCard
+                  key={`${a.name}-${i}`}
+                  agent={a}
+                  L={L}
+                  agentKind={agent}
+                  projectRoot={projectRoot}
+                />
               ))}
             </div>
           </section>
+        </>
+      );
+    case "project-health":
+      return (
+        <>
+          <section className="analysis-section">
+            <h4>{L.summary}</h4>
+            <MarkdownView content={structured.summary} />
+            <p>
+              <strong>Health score:</strong> {structured.healthScore}/100
+            </p>
+          </section>
+          {structured.rootCauses.map((rc) => (
+            <section key={rc.id} className="analysis-section">
+              <h4>
+                {rc.title} ({rc.impact})
+              </h4>
+              <MarkdownView content={`${rc.description}\n\n**Fix:** ${rc.recommendation}`} />
+            </section>
+          ))}
+        </>
+      );
+    case "user-fluency":
+    case "user-growth":
+      return (
+        <>
+          <section className="analysis-section">
+            <h4>{L.summary}</h4>
+            <MarkdownView content={structured.summary} />
+            <p>
+              <strong>Score:</strong> {structured.overallScore}/100
+            </p>
+          </section>
+          {structured.growthAreas.map((g) => (
+            <section key={g.area} className="analysis-section">
+              <h4>{g.area}</h4>
+              <MarkdownView content={g.whyItMatters} />
+              <ul>
+                {g.concreteActions.map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </>
+      );
+    case "memory-diff":
+      return (
+        <>
+          <section className="analysis-section">
+            <h4>{L.summary}</h4>
+            <MarkdownView content={structured.summary} />
+          </section>
+          {structured.items.map((item, i) => (
+            <section key={i} className="analysis-section">
+              <h4>
+                {item.path} ({item.action})
+              </h4>
+              <pre className="artifact-preview">{item.diffPreview}</pre>
+            </section>
+          ))}
+        </>
+      );
+    case "rule-dedup":
+      return (
+        <>
+          <section className="analysis-section">
+            <h4>{L.summary}</h4>
+            <MarkdownView content={structured.summary} />
+          </section>
+          {structured.items.map((item, i) => (
+            <section key={i} className="analysis-section">
+              <h4>
+                {item.name} → {item.proposedPath} ({item.action})
+              </h4>
+              <MarkdownView content={item.rationale} />
+              {item.content && <pre className="artifact-preview">{item.content}</pre>}
+            </section>
+          ))}
+        </>
+      );
+    case "compaction-recovery":
+      return (
+        <>
+          <section className="analysis-section">
+            <h4>{L.summary}</h4>
+            <MarkdownView content={structured.summary} />
+            {structured.boundaryTurn != null && (
+              <p>
+                <strong>Boundary turn:</strong> {structured.boundaryTurn}
+              </p>
+            )}
+          </section>
+          {structured.recoveryItems.map((item, i) => (
+            <section key={i} className="analysis-section">
+              <h4>
+                [{item.priority}] {item.action}
+              </h4>
+              <MarkdownView content={item.rationale} />
+              {item.suggestedContent && (
+                <pre className="artifact-preview">{item.suggestedContent}</pre>
+              )}
+            </section>
+          ))}
+        </>
+      );
+    case "mcp-tool-audit":
+      return (
+        <>
+          <section className="analysis-section">
+            <h4>{L.summary}</h4>
+            <MarkdownView content={structured.summary} />
+          </section>
+          <div className="analysis-waste-table-wrap">
+            <table className="analysis-waste-table">
+              <thead>
+                <tr>
+                  <th>Tool</th>
+                  <th>Severity</th>
+                  <th>Pattern</th>
+                  <th>Recommendation</th>
+                  <th>Calls</th>
+                  <th>Errors</th>
+                </tr>
+              </thead>
+              <tbody>
+                {structured.findings.map((f, i) => (
+                  <tr key={i}>
+                    <td>{f.toolName}</td>
+                    <td>
+                      <span className={`impact-badge impact-${f.severity === "critical" || f.severity === "high" ? "high" : "medium"}`}>
+                        {f.severity}
+                      </span>
+                    </td>
+                    <td>{f.pattern}</td>
+                    <td>{f.recommendation}</td>
+                    <td>{f.callCount}</td>
+                    <td>{f.errorCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      );
+    case "project-synthesis":
+      return (
+        <>
+          <section className="analysis-section">
+            <h4>{L.summary}</h4>
+            <MarkdownView content={structured.summary} />
+          </section>
+          {structured.themes.map((t) => (
+            <section key={t.id} className="analysis-section">
+              <h4>
+                {t.title} ({t.status})
+              </h4>
+              <MarkdownView content={t.summary} />
+            </section>
+          ))}
+          {structured.memoryGaps.map((g, i) => (
+            <section key={i} className="analysis-section">
+              <h4>{g.path}</h4>
+              <MarkdownView content={`${g.gap}\n\n→ ${g.suggestedAction}`} />
+            </section>
+          ))}
+          {structured.driftWarnings.length > 0 && (
+            <section className="analysis-section">
+              <h4>Drift warnings</h4>
+              <ul>
+                {structured.driftWarnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </section>
+          )}
         </>
       );
     default:
@@ -467,6 +728,21 @@ function isStructuredEmpty(structured: StructuredAnalysis): boolean {
       return structured.files.length === 0 && !structured.summary;
     case "orchestration":
       return structured.agents.length === 0 && !structured.summary && !structured.whenSwarm;
+    case "project-health":
+      return structured.rootCauses.length === 0 && !structured.summary;
+    case "user-fluency":
+    case "user-growth":
+      return structured.growthAreas.length === 0 && !structured.summary;
+    case "memory-diff":
+      return structured.items.length === 0 && !structured.summary;
+    case "rule-dedup":
+      return structured.items.length === 0 && !structured.summary;
+    case "compaction-recovery":
+      return structured.recoveryItems.length === 0 && !structured.summary;
+    case "mcp-tool-audit":
+      return structured.findings.length === 0 && !structured.summary;
+    case "project-synthesis":
+      return structured.themes.length === 0 && !structured.summary;
     default:
       return true;
   }
@@ -476,7 +752,7 @@ function inferAnalysisSource(result: AnalyzeResult): AnalysisSource | undefined 
   if (result.analysisSource) return result.analysisSource;
   if (result.llmUnavailable === "timeout") return "heuristic";
   if (!result.structured || isStructuredEmpty(result.structured)) return undefined;
-  if (result.parseWarning?.includes("JSON parse failed") || result.parseWarning?.includes("تعذّر تحليل JSON")) {
+  if (result.parseWarning?.includes("Could not parse") || result.parseWarning?.includes("تعذّر تحليل")) {
     return "heuristic";
   }
   return undefined;
@@ -512,7 +788,7 @@ function AnalysisSourceBanner({
   );
 }
 
-export function AnalysisResultCards({ result, copiedId, onCopy, locale }: Props) {
+export function AnalysisResultCards({ result, copiedId, onCopy, locale, agent = "cursor", projectRoot }: Props) {
   const L = LABELS[locale] ?? LABELS.en;
   const prefix = result.analysisId;
   const source = inferAnalysisSource(result);
@@ -533,13 +809,22 @@ export function AnalysisResultCards({ result, copiedId, onCopy, locale }: Props)
         </div>
       )}
       {hasStructured ? (
-        <StructuredBody
-          structured={result.structured!}
-          prefix={prefix}
-          copiedId={copiedId}
-          onCopy={onCopy}
-          L={L}
-        />
+        <>
+          <StructuredBody
+            structured={result.structured!}
+            prefix={prefix}
+            copiedId={copiedId}
+            onCopy={onCopy}
+            L={L}
+            agent={agent}
+            projectRoot={projectRoot}
+          />
+          <ApplyPackPanel
+            items={collectFromAnalysisResult(result, agent)}
+            projectRoot={projectRoot}
+            locale={locale}
+          />
+        </>
       ) : result.structured ? (
         <div className="empty-panel compact">{L.emptyStructured}</div>
       ) : (

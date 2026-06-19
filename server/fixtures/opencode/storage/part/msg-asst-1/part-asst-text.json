@@ -1,0 +1,7 @@
+{
+  "id": "part-asst-text",
+  "sessionID": "sess-demo",
+  "messageID": "msg-asst-1",
+  "type": "text",
+  "text": "I'll start by reviewing the existing auth middleware."
+}

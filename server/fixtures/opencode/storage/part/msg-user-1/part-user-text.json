@@ -1,0 +1,7 @@
+{
+  "id": "part-user-text",
+  "sessionID": "sess-demo",
+  "messageID": "msg-user-1",
+  "type": "text",
+  "text": "Build the authentication module for the ERP system"
+}

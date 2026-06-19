@@ -1,14 +1,27 @@
 import type {
   AnalysisSource,
+  AgentKind,
   ArtifactKind,
+  CompactionRecoveryItem,
+  FluencyDimension,
   GeneratedArtifact,
+  GrowthArea,
+  McpToolFinding,
+  MemoryDiffItem,
   MemoryFileDraft,
+  ProjectTheme,
+  ProjectDecision,
+  MemoryGap,
   RecurringPattern,
+  RootCauseItem,
+  RuleDedupItem,
   StructuredAnalysis,
   SubAgentSpec,
   TokenWasteItem,
+  ToolEvent,
 } from "../types.ts";
-import { renderArtifactBody } from "../artifacts/generator.ts";
+import { renderArtifactBodyForAgent } from "../artifacts/agent-registry.ts";
+import type { ProjectContextSnapshot } from "../project-context.ts";
 
 function stripCodeFences(raw: string): string {
   return raw
@@ -86,7 +99,10 @@ function asArtifactKind(v: unknown): ArtifactKind {
   return "rule";
 }
 
-function normalizeArtifact(raw: Record<string, unknown>): GeneratedArtifact {
+function normalizeArtifact(
+  raw: Record<string, unknown>,
+  agent: AgentKind = "cursor",
+): GeneratedArtifact {
   const kind = asArtifactKind(raw.kind);
   const artifact: GeneratedArtifact = {
     kind,
@@ -99,12 +115,12 @@ function normalizeArtifact(raw: Record<string, unknown>): GeneratedArtifact {
       : [],
     confidence: asConfidence(raw.confidence),
   };
-  artifact.rendered = renderArtifactBody(artifact);
+  artifact.rendered = renderArtifactBodyForAgent(agent, artifact);
   return artifact;
 }
 
-export function renderArtifact(artifact: GeneratedArtifact): string {
-  return renderArtifactBody(artifact);
+export function renderArtifact(artifact: GeneratedArtifact, agent: AgentKind = "cursor"): string {
+  return renderArtifactBodyForAgent(agent, artifact);
 }
 
 function normalizeWasteItem(raw: Record<string, unknown>): TokenWasteItem {
@@ -164,6 +180,43 @@ function normalizeSubAgent(raw: Record<string, unknown>): SubAgentSpec {
     handoffPoints: String(raw.handoffPoints ?? "").trim(),
     tools: Array.isArray(raw.tools) ? raw.tools.map(String).filter(Boolean) : [],
     confidence: asConfidence(raw.confidence),
+  };
+}
+
+function normalizeGrowthArea(raw: Record<string, unknown>): GrowthArea {
+  return {
+    area: String(raw.area ?? "").trim(),
+    whyItMatters: String(raw.whyItMatters ?? "").trim(),
+    concreteActions: Array.isArray(raw.concreteActions) ? raw.concreteActions.map(String) : [],
+    suggestedRule: raw.suggestedRule ? String(raw.suggestedRule) : undefined,
+    suggestedSkill: raw.suggestedSkill ? String(raw.suggestedSkill) : undefined,
+    practiceExercise: raw.practiceExercise ? String(raw.practiceExercise) : undefined,
+  };
+}
+
+function normalizeMemoryDiffItem(raw: Record<string, unknown>): MemoryDiffItem {
+  const action = String(raw.action ?? "create").toLowerCase();
+  return {
+    path: String(raw.path ?? "AGENTS.md").trim(),
+    action:
+      action === "update" || action === "append" || action === "skip" ? action : "create",
+    existingSummary: String(raw.existingSummary ?? "").trim(),
+    proposedSummary: String(raw.proposedSummary ?? "").trim(),
+    diffPreview: String(raw.diffPreview ?? raw.content ?? "").trim(),
+    rationale: String(raw.rationale ?? "").trim(),
+  };
+}
+
+function normalizeRuleDedupItem(raw: Record<string, unknown>): RuleDedupItem {
+  const action = String(raw.action ?? "create").toLowerCase();
+  return {
+    name: String(raw.name ?? "rule").trim(),
+    proposedPath: String(raw.proposedPath ?? ".cursor/rules/rule.mdc").trim(),
+    existingPath: raw.existingPath ? String(raw.existingPath) : undefined,
+    action:
+      action === "merge" || action === "replace" || action === "skip" ? action : "create",
+    rationale: String(raw.rationale ?? "").trim(),
+    content: String(raw.content ?? "").trim(),
   };
 }
 
@@ -257,9 +310,389 @@ export function formatStructuredAnalysisMarkdown(
       }
       break;
     }
+    case "project-health": {
+      lines.push(
+        `## ${h("Summary", "الملخص", locale)}`,
+        "",
+        structured.summary,
+        "",
+        `**${h("Health score", "درجة الصحة", locale)}:** ${structured.healthScore}/100`,
+        "",
+      );
+      if (structured.openRisks.length) {
+        lines.push(`## ${h("Open risks", "مخاطر مفتوحة", locale)}`, "");
+        for (const r of structured.openRisks) lines.push(`- ${r}`);
+      }
+      if (structured.rootCauses.length) {
+        lines.push("", `## ${h("Root causes", "أسباب جذرية", locale)}`, "");
+        for (const rc of structured.rootCauses) {
+          lines.push(
+            `### ${rc.title} (${rc.impact}, priority ${rc.fixPriority})`,
+            "",
+            rc.description,
+            "",
+            `**${h("Recommendation", "التوصية", locale)}:** ${rc.recommendation}`,
+            "",
+          );
+        }
+      }
+      break;
+    }
+    case "user-fluency":
+    case "user-growth": {
+      lines.push(
+        `## ${h("Summary", "الملخص", locale)}`,
+        "",
+        structured.summary,
+        "",
+        `**${h("Overall score", "الدرجة الإجمالية", locale)}:** ${structured.overallScore}/100`,
+        "",
+      );
+      if (structured.kind === "user-growth" && structured.weeklyPlan.length) {
+        lines.push(`## ${h("Weekly plan", "الخطة الأسبوعية", locale)}`, "");
+        for (const d of structured.weeklyPlan) {
+          lines.push(`- **${d.day}** — ${d.focus}: ${d.task}`);
+        }
+      }
+      if (structured.kind === "user-fluency" && structured.strengths.length) {
+        lines.push("", `## ${h("Strengths", "نقاط القوة", locale)}`, "");
+        for (const s of structured.strengths) lines.push(`- ${s}`);
+      }
+      if (structured.growthAreas.length) {
+        lines.push("", `## ${h("Growth areas", "مجالات النمو", locale)}`, "");
+        for (const g of structured.growthAreas) {
+          lines.push(`### ${g.area}`, "", g.whyItMatters, "");
+          for (const a of g.concreteActions) lines.push(`- ${a}`);
+        }
+      }
+      break;
+    }
+    case "memory-diff": {
+      lines.push(`## ${h("Summary", "الملخص", locale)}`, "", structured.summary, "");
+      for (const item of structured.items) {
+        lines.push(
+          "",
+          `### ${item.path} (${item.action})`,
+          "",
+          item.rationale,
+          "",
+          "```diff",
+          item.diffPreview,
+          "```",
+        );
+      }
+      break;
+    }
+    case "rule-dedup": {
+      lines.push(`## ${h("Summary", "الملخص", locale)}`, "", structured.summary, "");
+      for (const item of structured.items) {
+        lines.push(
+          "",
+          `### ${item.name} → ${item.proposedPath} (${item.action})`,
+          "",
+          item.rationale,
+        );
+      }
+      break;
+    }
+    case "compaction-recovery": {
+      lines.push(`## ${h("Summary", "الملخص", locale)}`, "", structured.summary, "");
+      if (structured.boundaryTurn != null) {
+        lines.push("", `**${h("Boundary turn", "نقطة compaction", locale)}:** ${structured.boundaryTurn}`);
+      }
+      for (const item of structured.recoveryItems) {
+        lines.push("", `### [${item.priority}] ${item.action}`, "", item.rationale);
+      }
+      break;
+    }
+    case "mcp-tool-audit": {
+      lines.push(`## ${h("Summary", "الملخص", locale)}`, "", structured.summary, "");
+      for (const f of structured.findings) {
+        lines.push(
+          "",
+          `### ${f.toolName} (${f.severity})`,
+          "",
+          `${f.pattern} — ${f.recommendation}`,
+          "",
+          `Calls: ${f.callCount}, Errors: ${f.errorCount}`,
+        );
+      }
+      break;
+    }
+    case "project-synthesis": {
+      lines.push(`## ${h("Summary", "الملخص", locale)}`, "", structured.summary, "");
+      if (structured.themes.length) {
+        lines.push("", `## ${h("Themes", "المواضيع", locale)}`, "");
+        for (const t of structured.themes) {
+          lines.push(`- **${t.title}** (${t.status}): ${t.summary}`);
+        }
+      }
+      if (structured.decisions.length) {
+        lines.push("", `## ${h("Decisions", "القرارات", locale)}`, "");
+        for (const d of structured.decisions) lines.push(`- ${d.decision}: ${d.rationale}`);
+      }
+      if (structured.memoryGaps.length) {
+        lines.push("", `## ${h("Memory gaps", "فجوات الذاكرة", locale)}`, "");
+        for (const g of structured.memoryGaps) lines.push(`- ${g.path}: ${g.gap} → ${g.suggestedAction}`);
+      }
+      if (structured.driftWarnings.length) {
+        lines.push("", `## ${h("Drift warnings", "تحذيرات الانحراف", locale)}`, "");
+        for (const w of structured.driftWarnings) lines.push(`- ${w}`);
+      }
+      break;
+    }
   }
 
   return lines.join("\n");
+}
+
+export type ParseAnalysisOptions = {
+  agent?: AgentKind;
+  projectContext?: ProjectContextSnapshot;
+  toolEvents?: ToolEvent[];
+  compactionBoundaryIndex?: number | null;
+};
+
+function buildHeuristicProjectHealth(
+  patterns: RecurringPattern[],
+  locale: "ar" | "en",
+): StructuredAnalysis {
+  const rootCauses: RootCauseItem[] = patterns.slice(0, 8).map((p, i) => ({
+    id: p.id,
+    category: p.kind.includes("tool") ? "tooling" : p.kind.includes("user") ? "prompting" : "workflow",
+    title: p.label,
+    impact: p.count >= 5 ? "critical" : p.count >= 3 ? "high" : "medium",
+    description: p.description,
+    sessionIds: p.sessionIds,
+    estimatedTokenWaste: p.estimatedTokenWaste,
+    fixPriority: i + 1,
+    recommendation: p.recommendation,
+  }));
+  const waste = patterns.reduce((s, p) => s + (p.estimatedTokenWaste ?? 0), 0);
+  const healthScore = Math.max(10, 100 - rootCauses.length * 8 - Math.min(40, Math.floor(waste / 5000)));
+  return {
+    kind: "project-health",
+    summary:
+      locale === "ar"
+        ? `تحليل heuristic: ${rootCauses.length} سبب جذري عبر الجلسات.`
+        : `Heuristic analysis: ${rootCauses.length} cross-session root cause(s).`,
+    healthScore,
+    rootCauses,
+    openRisks: patterns.filter((p) => p.count >= 3).map((p) => p.label),
+  };
+}
+
+function buildHeuristicMemoryDiff(
+  projectContext: ProjectContextSnapshot | undefined,
+  locale: "ar" | "en",
+): StructuredAnalysis | undefined {
+  if (!projectContext?.files.length) return undefined;
+  const items: MemoryDiffItem[] = projectContext.files
+    .filter((f) => /\.md$/i.test(f.relativePath) && !f.relativePath.includes("/rules/"))
+    .slice(0, 4)
+    .map((f) => ({
+      path: f.relativePath,
+      action: "skip" as const,
+      existingSummary: f.content.slice(0, 200).replace(/\s+/g, " "),
+      proposedSummary: locale === "ar" ? "لا تغييرات مقترحة (heuristic)" : "No proposed changes (heuristic)",
+      diffPreview: f.content.slice(0, 500),
+      rationale:
+        locale === "ar"
+          ? "ملف موجود على القرص — راجع session analysis لتحديثات مقترحة."
+          : "File exists on disk — run memory-file-drafts for proposed updates.",
+    }));
+  if (!items.length) return undefined;
+  return {
+    kind: "memory-diff",
+    summary:
+      locale === "ar"
+        ? "ملخص diff heuristic لملفات الذاكرة الموجودة."
+        : "Heuristic diff summary for existing memory files.",
+    items,
+  };
+}
+
+function buildHeuristicRuleDedup(
+  patterns: RecurringPattern[],
+  projectContext: ProjectContextSnapshot | undefined,
+  agent: AgentKind,
+  locale: "ar" | "en",
+): StructuredAnalysis | undefined {
+  const existingRules = projectContext?.files.filter((f) => /rules.*\.(mdc|md)$/i.test(f.relativePath)) ?? [];
+  const items: RuleDedupItem[] = patterns.slice(0, 5).map((p) => {
+    const slug = p.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30);
+    const proposedPath =
+      agent === "cursor"
+        ? `.cursor/rules/${slug}.mdc`
+        : agent === "claude"
+          ? `.claude/rules/${slug}.md`
+          : `.opencode/rules/${slug}.md`;
+    const match = existingRules.find((r) => r.relativePath.includes(slug));
+    return {
+      name: slug,
+      proposedPath,
+      existingPath: match?.relativePath,
+      action: match ? "skip" : "create",
+      rationale: p.recommendation,
+      content: p.recommendation,
+    };
+  });
+  if (!items.length) return undefined;
+  return {
+    kind: "rule-dedup",
+    summary:
+      locale === "ar"
+        ? "اقتراحات dedup heuristic مقارنة بالقواعد الموجودة."
+        : "Heuristic rule dedup suggestions vs existing project rules.",
+    items,
+  };
+}
+
+function buildHeuristicCompactionRecovery(
+  patterns: RecurringPattern[],
+  locale: "ar" | "en",
+  boundaryTurn?: number | null,
+): StructuredAnalysis | undefined {
+  const hasCompaction =
+    boundaryTurn != null || patterns.some((p) => p.kind === "compaction_pressure");
+  if (!hasCompaction) return undefined;
+
+  const recoveryItems: CompactionRecoveryItem[] = [
+    {
+      priority: "critical",
+      action:
+        locale === "ar"
+          ? "أعد حقن القرارات والمهام المفتوحة في AGENTS.md أو docs/context/"
+          : "Re-inject decisions and open tasks into AGENTS.md or docs/context/",
+      rationale:
+        locale === "ar"
+          ? "Compaction أزال سياق ما قبل الحد — لا يُعاد تلقائياً"
+          : "Compaction removed pre-boundary context — it is not restored automatically",
+      suggestedMemoryPath: "AGENTS.md",
+    },
+    {
+      priority: "high",
+      action:
+        locale === "ar"
+          ? "قسّم المهام الكبيرة قبل ضغط السياق"
+          : "Split large tasks before context pressure triggers compaction",
+      rationale:
+        locale === "ar"
+          ? "يقلل فقدان السياق في الجلسات الطويلة"
+          : "Reduces context loss in long sessions",
+    },
+  ];
+
+  for (const p of patterns.filter((x) => x.kind === "compaction_pressure")) {
+    recoveryItems.push({
+      priority: "medium",
+      action: p.recommendation,
+      rationale: p.description,
+    });
+  }
+
+  return {
+    kind: "compaction-recovery",
+    summary:
+      locale === "ar"
+        ? "خطة استرداد heuristic بعد compaction."
+        : "Heuristic compaction recovery plan.",
+    boundaryTurn: boundaryTurn ?? undefined,
+    recoveryItems,
+  };
+}
+
+function buildHeuristicMcpToolAudit(
+  toolEvents: ToolEvent[] | undefined,
+  locale: "ar" | "en",
+): StructuredAnalysis | undefined {
+  if (!toolEvents?.length) return undefined;
+
+  const isMcpLike = (t: ToolEvent) =>
+    /mcp|CallMcpTool|FetchMcpResource|browser_cdp|browser_/i.test(t.toolName) ||
+    /mcp/i.test(t.toolInput);
+
+  const relevant = toolEvents.filter((t) => isMcpLike(t) || t.isError);
+  if (!relevant.length) return undefined;
+
+  const byTool = new Map<string, ToolEvent[]>();
+  for (const t of relevant) {
+    const key = t.toolName || "unknown";
+    const list = byTool.get(key) ?? [];
+    list.push(t);
+    byTool.set(key, list);
+  }
+
+  const findings: McpToolFinding[] = [...byTool.entries()]
+    .map(([toolName, events]) => {
+      const errorCount = events.filter((e) => e.isError).length;
+      const severity: McpToolFinding["severity"] =
+        errorCount >= 3 ? "critical" : errorCount >= 2 ? "high" : errorCount >= 1 ? "medium" : "low";
+      return {
+        toolName,
+        callCount: events.length,
+        errorCount,
+        severity,
+        pattern:
+          errorCount > 0
+            ? locale === "ar"
+              ? `${errorCount} خطأ في ${events.length} استدعاء`
+              : `${errorCount} error(s) across ${events.length} call(s)`
+            : locale === "ar"
+              ? "استدعاءات متكررة بدون أخطاء"
+              : "Repeated calls without errors",
+        recommendation:
+          errorCount > 0
+            ? locale === "ar"
+              ? "تحقق من schema الأداة قبل الاستدعاء؛ أضف pre-check rule"
+              : "Verify tool schema before calling; add a pre-check rule"
+            : locale === "ar"
+              ? "دمج الاستدعاءات المتكررة أو cache النتائج"
+              : "Batch repeated calls or cache results",
+        turns: [...new Set(events.map((e) => e.turn))].slice(0, 8),
+      };
+    })
+    .sort((a, b) => b.errorCount - a.errorCount || b.callCount - a.callCount)
+    .slice(0, 12);
+
+  if (!findings.length) return undefined;
+
+  return {
+    kind: "mcp-tool-audit",
+    summary:
+      locale === "ar"
+        ? `تدقيق heuristic: ${findings.length} أداة/نمط.`
+        : `Heuristic audit: ${findings.length} tool pattern(s).`,
+    findings,
+  };
+}
+
+function buildHeuristicProjectSynthesis(
+  patterns: RecurringPattern[],
+  locale: "ar" | "en",
+): StructuredAnalysis | undefined {
+  if (!patterns.length) return undefined;
+  const themes: ProjectTheme[] = patterns.slice(0, 8).map((p) => ({
+    id: p.id,
+    title: p.label,
+    sessions: p.sessionIds,
+    summary: p.description,
+    status: p.count >= 5 ? "blocked" : p.count >= 3 ? "active" : "resolved",
+  }));
+  const driftWarnings = patterns
+    .filter((p) => p.kind === "duplicate_user_intent" || p.kind === "retry_loop")
+    .map((p) => `${p.label}: ${p.recommendation}`);
+  return {
+    kind: "project-synthesis",
+    summary:
+      locale === "ar"
+        ? `توليف heuristic عبر ${patterns.length} نمط cross-session.`
+        : `Heuristic synthesis across ${patterns.length} cross-session pattern(s).`,
+    themes,
+    decisions: [],
+    memoryGaps: [],
+    driftWarnings,
+  };
 }
 
 function patternToRule(p: RecurringPattern): GeneratedArtifact {
@@ -272,7 +705,7 @@ function patternToRule(p: RecurringPattern): GeneratedArtifact {
     sourceTurns: [],
     confidence: p.count >= 4 ? "high" : p.count >= 2 ? "medium" : "low",
   };
-  artifact.rendered = renderArtifactBody(artifact);
+  artifact.rendered = renderArtifactBodyForAgent("cursor", artifact);
   return artifact;
 }
 
@@ -287,7 +720,7 @@ function patternToToolHint(p: RecurringPattern): GeneratedArtifact {
     sourceTurns: [],
     confidence: p.count >= 3 ? "high" : "medium",
   };
-  artifact.rendered = renderArtifactBody(artifact);
+  artifact.rendered = renderArtifactBodyForAgent("cursor", artifact);
   return artifact;
 }
 
@@ -336,6 +769,21 @@ function structuredItemCount(structured: StructuredAnalysis): number {
       return structured.files.length;
     case "orchestration":
       return structured.agents.length;
+    case "project-health":
+      return structured.rootCauses.length;
+    case "user-fluency":
+    case "user-growth":
+      return structured.growthAreas.length;
+    case "memory-diff":
+      return structured.items.length;
+    case "rule-dedup":
+      return structured.items.length;
+    case "compaction-recovery":
+      return structured.recoveryItems.length;
+    case "mcp-tool-audit":
+      return structured.findings.length;
+    case "project-synthesis":
+      return structured.themes.length + structured.memoryGaps.length;
     default:
       return 0;
   }
@@ -363,7 +811,54 @@ function supplementFromPatterns(
   structured: StructuredAnalysis | undefined,
   patterns: RecurringPattern[],
   locale: "ar" | "en",
+  opts: ParseAnalysisOptions = {},
 ): StructuredAnalysis | undefined {
+  if (!patterns.length && type !== "memory-diff" && type !== "rule-dedup") return structured;
+
+  if (type === "project-health-report" && patterns.length) {
+    if (structured?.kind === "project-health" && structured.rootCauses.length) return structured;
+    return buildHeuristicProjectHealth(patterns, locale);
+  }
+
+  if (type === "project-synthesis" && patterns.length) {
+    const heuristic = buildHeuristicProjectSynthesis(patterns, locale);
+    if (heuristic && !structured) return heuristic;
+    return structured ?? heuristic;
+  }
+
+  if (type === "memory-diff") {
+    const heuristic = buildHeuristicMemoryDiff(opts.projectContext, locale);
+    if (heuristic && !structured) return heuristic;
+    return structured ?? heuristic;
+  }
+
+  if (type === "rule-dedup") {
+    const heuristic = buildHeuristicRuleDedup(
+      patterns,
+      opts.projectContext,
+      opts.agent ?? "cursor",
+      locale,
+    );
+    if (heuristic && !structured) return heuristic;
+    return structured ?? heuristic;
+  }
+
+  if (type === "compaction-recovery") {
+    const heuristic = buildHeuristicCompactionRecovery(
+      patterns,
+      locale,
+      opts.compactionBoundaryIndex,
+    );
+    if (heuristic && !structured) return heuristic;
+    return structured ?? heuristic;
+  }
+
+  if (type === "mcp-tool-audit") {
+    const heuristic = buildHeuristicMcpToolAudit(opts.toolEvents, locale);
+    if (heuristic && !structured) return heuristic;
+    return structured ?? heuristic;
+  }
+
   if (!patterns.length) return structured;
 
   if (type === "token-audit") {
@@ -435,6 +930,21 @@ function isStructuredEmpty(structured: StructuredAnalysis | undefined): boolean 
       return !structured.summary && structured.files.length === 0;
     case "orchestration":
       return !structured.summary && !structured.whenSwarm && structured.agents.length === 0;
+    case "project-health":
+      return !structured.summary && structured.rootCauses.length === 0;
+    case "user-fluency":
+    case "user-growth":
+      return !structured.summary && structured.growthAreas.length === 0;
+    case "memory-diff":
+      return !structured.summary && structured.items.length === 0;
+    case "rule-dedup":
+      return !structured.summary && structured.items.length === 0;
+    case "compaction-recovery":
+      return !structured.summary && structured.recoveryItems.length === 0;
+    case "mcp-tool-audit":
+      return !structured.summary && structured.findings.length === 0;
+    case "project-synthesis":
+      return !structured.summary && structured.themes.length === 0 && structured.memoryGaps.length === 0;
     default:
       return true;
   }
@@ -444,12 +954,33 @@ export function buildHeuristicFallbackResult(
   type: string,
   patterns: RecurringPattern[],
   locale: "ar" | "en",
+  opts: ParseAnalysisOptions = {},
 ): ParsedAnalysis | null {
-  if (!patterns.length) return null;
-  if (type !== "token-audit" && type !== "loop-diagnosis" && type !== "tool-hardening") {
+  if (
+    !patterns.length &&
+    type !== "memory-diff" &&
+    type !== "rule-dedup" &&
+    type !== "compaction-recovery" &&
+    type !== "mcp-tool-audit" &&
+    type !== "project-synthesis"
+  ) {
     return null;
   }
-  const parsed = parseAnalysisResponse(type, "", locale, patterns);
+  const supported = [
+    "token-audit",
+    "loop-diagnosis",
+    "tool-hardening",
+    "artifact-blueprint",
+    "memory-file-drafts",
+    "project-health-report",
+    "memory-diff",
+    "rule-dedup",
+    "compaction-recovery",
+    "mcp-tool-audit",
+    "project-synthesis",
+  ];
+  if (!supported.includes(type)) return null;
+  const parsed = parseAnalysisResponse(type, "", locale, patterns, opts);
   if (!parsed.structured || isStructuredEmpty(parsed.structured)) return null;
   return { ...parsed, analysisSource: "heuristic" };
 }
@@ -466,7 +997,9 @@ export function parseAnalysisResponse(
   raw: string,
   locale: "ar" | "en",
   patterns: RecurringPattern[] = [],
+  opts: ParseAnalysisOptions = {},
 ): ParsedAnalysis {
+  const agent = opts.agent ?? "cursor";
   if (
     type === "agentic-lessons" ||
     type === "summarize" ||
@@ -500,7 +1033,7 @@ export function parseAnalysisResponse(
       case "loop-diagnosis": {
         const rules = Array.isArray(parsed.preventionRules)
           ? parsed.preventionRules
-              .map((r) => normalizeArtifact(r as Record<string, unknown>))
+              .map((r) => normalizeArtifact(r as Record<string, unknown>, agent))
               .filter((r) => r.content)
           : [];
         structured = {
@@ -513,7 +1046,7 @@ export function parseAnalysisResponse(
       case "tool-hardening": {
         const items = Array.isArray(parsed.toolHints)
           ? parsed.toolHints
-              .map((r) => normalizeArtifact(r as Record<string, unknown>))
+              .map((r) => normalizeArtifact(r as Record<string, unknown>, agent))
               .filter((r) => r.content)
           : [];
         structured = {
@@ -526,7 +1059,7 @@ export function parseAnalysisResponse(
       case "artifact-blueprint": {
         const items = Array.isArray(parsed.artifacts)
           ? parsed.artifacts
-              .map((r) => normalizeArtifact(r as Record<string, unknown>))
+              .map((r) => normalizeArtifact(r as Record<string, unknown>, agent))
               .filter((r) => r.content)
           : [];
         structured = {
@@ -567,11 +1100,172 @@ export function parseAnalysisResponse(
         };
         break;
       }
+      case "project-health-report": {
+        const rootCauses = Array.isArray(parsed.rootCauses)
+          ? parsed.rootCauses.map((rc, i) => ({
+              id: String((rc as Record<string, unknown>).id ?? `rc-${i}`),
+              category: String((rc as Record<string, unknown>).category ?? "workflow"),
+              title: String((rc as Record<string, unknown>).title ?? "").trim(),
+              impact: asImpact((rc as Record<string, unknown>).impact) as RootCauseItem["impact"],
+              description: String((rc as Record<string, unknown>).description ?? "").trim(),
+              sessionIds: Array.isArray((rc as Record<string, unknown>).sessionIds)
+                ? ((rc as Record<string, unknown>).sessionIds as unknown[]).map(String)
+                : [],
+              estimatedTokenWaste: Number((rc as Record<string, unknown>).estimatedTokenWaste) || undefined,
+              fixPriority: Number((rc as Record<string, unknown>).fixPriority) || i + 1,
+              recommendation: String((rc as Record<string, unknown>).recommendation ?? "").trim(),
+            }))
+          : [];
+        structured = {
+          kind: "project-health",
+          summary: String(parsed.summary ?? "").trim(),
+          healthScore: Math.min(100, Math.max(0, Number(parsed.healthScore) || 50)),
+          rootCauses,
+          openRisks: Array.isArray(parsed.openRisks) ? parsed.openRisks.map(String) : [],
+        };
+        break;
+      }
+      case "user-ai-fluency": {
+        structured = {
+          kind: "user-fluency",
+          summary: String(parsed.summary ?? "").trim(),
+          overallScore: Math.min(100, Math.max(0, Number(parsed.overallScore) || 50)),
+          dimensions: Array.isArray(parsed.dimensions)
+            ? (parsed.dimensions as Record<string, unknown>[]).map((d) => ({
+                id: String(d.id ?? "dimension"),
+                label: String(d.label ?? "").trim(),
+                score: Math.min(5, Math.max(1, Number(d.score) || 3)),
+                evidence: String(d.evidence ?? "").trim(),
+                examples: Array.isArray(d.examples)
+                  ? (d.examples as Record<string, unknown>[]).map((e) => ({
+                      turn: Number(e.turn) || 0,
+                      quote: String(e.quote ?? "").trim(),
+                    }))
+                  : [],
+              }))
+            : [],
+          strengths: Array.isArray(parsed.strengths) ? parsed.strengths.map(String) : [],
+          growthAreas: Array.isArray(parsed.growthAreas)
+            ? (parsed.growthAreas as Record<string, unknown>[]).map(normalizeGrowthArea)
+            : [],
+        };
+        break;
+      }
+      case "user-growth-plan": {
+        structured = {
+          kind: "user-growth",
+          summary: String(parsed.summary ?? "").trim(),
+          overallScore: Math.min(100, Math.max(0, Number(parsed.overallScore) || 50)),
+          weeklyPlan: Array.isArray(parsed.weeklyPlan)
+            ? (parsed.weeklyPlan as Record<string, unknown>[]).map((d) => ({
+                day: String(d.day ?? ""),
+                focus: String(d.focus ?? "").trim(),
+                task: String(d.task ?? "").trim(),
+              }))
+            : [],
+          growthAreas: Array.isArray(parsed.growthAreas)
+            ? (parsed.growthAreas as Record<string, unknown>[]).map(normalizeGrowthArea)
+            : [],
+        };
+        break;
+      }
+      case "memory-diff": {
+        structured = {
+          kind: "memory-diff",
+          summary: String(parsed.summary ?? "").trim(),
+          items: Array.isArray(parsed.items)
+            ? (parsed.items as Record<string, unknown>[]).map(normalizeMemoryDiffItem)
+            : [],
+        };
+        break;
+      }
+      case "rule-dedup": {
+        structured = {
+          kind: "rule-dedup",
+          summary: String(parsed.summary ?? "").trim(),
+          items: Array.isArray(parsed.items)
+            ? (parsed.items as Record<string, unknown>[]).map(normalizeRuleDedupItem)
+            : [],
+        };
+        break;
+      }
+      case "compaction-recovery": {
+        structured = {
+          kind: "compaction-recovery",
+          summary: String(parsed.summary ?? "").trim(),
+          boundaryTurn: parsed.boundaryTurn != null ? Number(parsed.boundaryTurn) : undefined,
+          recoveryItems: Array.isArray(parsed.recoveryItems)
+            ? (parsed.recoveryItems as Record<string, unknown>[]).map((r) => ({
+                priority: (["critical", "high", "medium"].includes(String(r.priority))
+                  ? String(r.priority)
+                  : "medium") as CompactionRecoveryItem["priority"],
+                action: String(r.action ?? "").trim(),
+                rationale: String(r.rationale ?? "").trim(),
+                suggestedMemoryPath: r.suggestedMemoryPath ? String(r.suggestedMemoryPath) : undefined,
+                suggestedContent: r.suggestedContent ? String(r.suggestedContent) : undefined,
+              }))
+            : [],
+        };
+        break;
+      }
+      case "mcp-tool-audit": {
+        structured = {
+          kind: "mcp-tool-audit",
+          summary: String(parsed.summary ?? "").trim(),
+          findings: Array.isArray(parsed.findings)
+            ? (parsed.findings as Record<string, unknown>[]).map((f) => ({
+                toolName: String(f.toolName ?? "unknown"),
+                callCount: Number(f.callCount) || 0,
+                errorCount: Number(f.errorCount) || 0,
+                severity: (["critical", "high", "medium", "low"].includes(String(f.severity))
+                  ? String(f.severity)
+                  : "medium") as McpToolFinding["severity"],
+                pattern: String(f.pattern ?? "").trim(),
+                recommendation: String(f.recommendation ?? "").trim(),
+                turns: Array.isArray(f.turns) ? f.turns.map(Number).filter(Boolean) : [],
+              }))
+            : [],
+        };
+        break;
+      }
+      case "project-synthesis": {
+        structured = {
+          kind: "project-synthesis",
+          summary: String(parsed.summary ?? "").trim(),
+          themes: Array.isArray(parsed.themes)
+            ? (parsed.themes as Record<string, unknown>[]).map((t) => ({
+                id: String(t.id ?? ""),
+                title: String(t.title ?? "").trim(),
+                sessions: Array.isArray(t.sessions) ? t.sessions.map(String) : [],
+                summary: String(t.summary ?? "").trim(),
+                status: (["active", "resolved", "blocked"].includes(String(t.status))
+                  ? String(t.status)
+                  : "active") as ProjectTheme["status"],
+              }))
+            : [],
+          decisions: Array.isArray(parsed.decisions)
+            ? (parsed.decisions as Record<string, unknown>[]).map((d) => ({
+                decision: String(d.decision ?? "").trim(),
+                rationale: String(d.rationale ?? "").trim(),
+                sessionIds: Array.isArray(d.sessionIds) ? d.sessionIds.map(String) : [],
+              }))
+            : [],
+          memoryGaps: Array.isArray(parsed.memoryGaps)
+            ? (parsed.memoryGaps as Record<string, unknown>[]).map((g) => ({
+                path: String(g.path ?? "").trim(),
+                gap: String(g.gap ?? "").trim(),
+                suggestedAction: String(g.suggestedAction ?? "").trim(),
+              }))
+            : [],
+          driftWarnings: Array.isArray(parsed.driftWarnings) ? parsed.driftWarnings.map(String) : [],
+        };
+        break;
+      }
       default:
         return { markdown: raw.trim() };
     }
   } catch {
-    structured = supplementFromPatterns(type, undefined, patterns, locale);
+    structured = supplementFromPatterns(type, undefined, patterns, locale, opts);
     if (structured && !isStructuredEmpty(structured)) {
       return {
         structured,
@@ -587,7 +1281,7 @@ export function parseAnalysisResponse(
   }
 
   const llmStructured = structured;
-  structured = supplementFromPatterns(type, structured, patterns, locale);
+  structured = supplementFromPatterns(type, structured, patterns, locale, opts);
 
   if (isStructuredEmpty(structured)) {
     parseWarning =

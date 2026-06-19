@@ -27,13 +27,21 @@ describe("agent registry", () => {
     expect(getAgentConfig("cursor").sessionsDir).toContain("projects");
   });
 
+  test("uses OpenCode storage directory", () => {
+    expect(getAgentConfig("opencode").sessionsDir).toContain("opencode");
+    expect(getAgentConfig("opencode").sessionsDir).toContain("storage");
+  });
+
   test("decodes Pi project slugs to readable Windows paths", () => {
     expect(decodePiProjectSlug("--D--dev-ERP-SAP--")).toBe("D:\\dev\\ERP-SAP");
     expect(decodePiProjectSlug("--C--Users-Eng.Zoheer--")).toBe("C:\\Users\\Eng.Zoheer");
   });
 
   test("decodes Cursor project slugs", () => {
-    expect(decodeCursorProjectSlug("d-dev-ERP-SAP")).toBe("D:/dev/ERP/SAP");
+    expect(decodeCursorProjectSlug("d-dev-ERP-SAP")).toBe("D:/dev/ERP-SAP");
+    expect(decodeCursorProjectSlug("d-dev-claude-context-visualizer-master")).toBe(
+      "D:/dev/claude-context-visualizer-master",
+    );
   });
 });
 

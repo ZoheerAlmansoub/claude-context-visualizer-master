@@ -7,6 +7,8 @@ import { MessagesPanel } from "./MessagesPanel";
 import { AnalysisPanel } from "./AnalysisPanel";
 import { ArtifactsPanel } from "./ArtifactsPanel";
 import { InsightsPanel } from "./InsightsPanel";
+import { GovernancePanel } from "./GovernancePanel";
+import { ProjectDashboard } from "./ProjectDashboard";
 
 type Props = { agent: AgentKind; session: SessionListItem };
 
@@ -47,6 +49,7 @@ function gatherOffenders(snap: Snapshot): OffenderRow[] {
 
 export function Detail({ agent, session }: Props) {
   const [tab, setTab] = useState<DetailTab>("context");
+  const [projectVerified, setProjectVerified] = useState<boolean | null>(null);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<ViewMode>("treemap");
@@ -68,6 +71,11 @@ export function Detail({ agent, session }: Props) {
   };
   useEffect(() => { load(); }, [agent, session.id]);
   useEffect(() => { setTab("context"); }, [agent, session.id]);
+  useEffect(() => {
+    api.projectContextSummary(agent, session.project, session.projectPath)
+      .then((c) => setProjectVerified(c.verified))
+      .catch(() => setProjectVerified(null));
+  }, [agent, session.project, session.projectPath]);
 
   const allOffenders = useMemo(() => (snap ? gatherOffenders(snap) : []), [snap]);
 
@@ -100,6 +108,23 @@ export function Detail({ agent, session }: Props) {
 
   return (
     <>
+      <div className="session-header">
+        <h1 className="session-title">{session.title}</h1>
+        <div className="session-header-meta">
+          <span
+            className="project-path-badge"
+            title={session.projectPath}
+          >
+            {session.projectPath.split(/[\\/]/).slice(-2).join("/") || session.projectPath}
+          </span>
+          {projectVerified === true && <span className="badge-ok">Verified</span>}
+          {projectVerified === false && <span className="badge-warn">Unverified</span>}
+          <span className="agent-badge">{agent}</span>
+          {session.hasCompaction && <span className="compaction-mark">compacted</span>}
+          {session.model && <span className="session-model-badge">{session.model}</span>}
+        </div>
+      </div>
+
       {/* ─── Hero ─── */}
       <div className="hero">
         <div className="hero-top">
@@ -158,9 +183,15 @@ export function Detail({ agent, session }: Props) {
       {tab === "messages" && (
         <MessagesPanel agent={agent} sessionId={session.id} />
       )}
-      {tab === "analysis" && <AnalysisPanel agent={agent} sessionId={session.id} />}
-      {tab === "artifacts" && <ArtifactsPanel agent={agent} sessionId={session.id} />}
+      {tab === "analysis" && (
+        <AnalysisPanel agent={agent} sessionId={session.id} session={session} />
+      )}
+      {tab === "artifacts" && (
+        <ArtifactsPanel agent={agent} sessionId={session.id} projectPath={session.projectPath} />
+      )}
       {tab === "insights" && <InsightsPanel agent={agent} session={session} />}
+      {tab === "dashboard" && <ProjectDashboard agent={agent} session={session} />}
+      {tab === "governance" && <GovernancePanel agent={agent} session={session} />}
 
       {tab === "context" && (
         <>
