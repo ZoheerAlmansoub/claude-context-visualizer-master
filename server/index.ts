@@ -1,7 +1,7 @@
-import { stat } from "node:fs/promises";
-import { listProjects, listSessions, findSessionById } from "./indexer.ts";
+import { listProjects, listSessions, findSessionById, findSessionMeta } from "./indexer.ts";
 import { computeSnapshot } from "./snapshot.ts";
 import { readCached, writeCached, invalidateCache } from "./cache.ts";
+import { resolveSessionSourceMtimeMs } from "./opencode-loader.ts";
 import { isAgentKind } from "./paths.ts";
 import { computeTranscript, formatUserMessages } from "./transcript.ts";
 import { getPublicLlmConfig, ANALYSIS_TYPES } from "./config.ts";
@@ -15,6 +15,17 @@ import { runAnalysis, listSessionAnalyses, getSessionAnalysis } from "./analysis
 import { improveUserPrompt, listPromptImprovements } from "./prompt-improvement.ts";
 import { generateArtifacts } from "./artifacts/generator.ts";
 import { detectSessionPatterns, writeArtifactFile } from "./insights/pattern-detector.ts";
+import { applyArtifactPack } from "./artifacts/write.ts";
+import { loadProjectContext, toProjectContextSummary } from "./project-context.ts";
+import {
+  runSessionGovernancePipeline,
+  runProjectGovernancePipeline,
+  getGovernancePipeline,
+  cancelGovernancePipeline,
+  resumeGovernancePipeline,
+} from "./governance/pipeline.ts";
+import { getGovernanceSchedule, isGovernanceEligible } from "./governance/schedule.ts";
+import { exportPlaybookToProject } from "./governance/playbook.ts";
 import { getProjectInsights } from "./insights/indexer.ts";
 import type { AnalyzeType, LlmProviderKind } from "./types.ts";
 
@@ -160,12 +171,16 @@ const server = Bun.serve({
         const body = await readJsonBody(req);
         const type = (body.type as AnalyzeType) ?? "summarize";
         const transcript = await computeTranscript(filePath, agent, sessionId);
+        const meta = await findSessionMeta(sessionId, agent);
         const result = await runAnalysis(transcript, {
           type,
           provider: body.provider as LlmProviderKind | undefined,
           model: body.model as string | undefined,
           locale: (body.locale as "ar" | "en") ?? "en",
           force: body.force === true,
+          transcriptMtimeMs: meta?.mtimeMs,
+          projectSlug: meta?.project,
+          projectPath: meta?.projectPath,
         });
         return json(result);
       }
@@ -232,6 +247,7 @@ const server = Bun.serve({
           provider: body.provider as LlmProviderKind | undefined,
           model: body.model as string | undefined,
           locale: (body.locale as "ar" | "en") ?? "en",
+          agent,
         });
         return json({ artifacts });
       }
@@ -262,9 +278,194 @@ const server = Bun.serve({
         const body = await readJsonBody(req);
         const targetPath = body.path as string;
         const content = body.content as string;
+        const projectRoot = body.projectRoot as string | undefined;
+        const action = body.action as "create" | "update" | "append" | undefined;
         if (!targetPath || !content) return badRequest("path and content required");
-        await writeArtifactFile(targetPath, content);
-        return json({ ok: true, path: targetPath });
+        if (action && action !== "create") {
+          const { writeWithMerge } = await import("./artifacts/write.ts");
+          const result = await writeWithMerge({
+            targetPath,
+            content,
+            action,
+            projectRoot,
+          });
+          return json({ ok: true, path: result.path, merged: true });
+        }
+        const result = await writeArtifactFile(targetPath, content, { projectRoot });
+        return json({ ok: true, path: result.path });
+      }
+
+      if (path === "/api/artifacts/apply-pack" && req.method === "POST") {
+        const body = await readJsonBody(req);
+        const items = body.items as Array<{
+          path: string;
+          content: string;
+          action?: "create" | "update" | "append";
+          selected?: boolean;
+        }>;
+        const projectRoot = body.projectRoot as string | undefined;
+        if (!Array.isArray(items)) return badRequest("items array required");
+        const results = await applyArtifactPack(items, projectRoot);
+        return json({ results });
+      }
+
+      const projectDashboardMatch = path.match(/^\/api\/projects\/([^/]+)\/dashboard$/);
+      if (projectDashboardMatch && req.method === "GET") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const projectSlug = decodeURIComponent(projectDashboardMatch[1]!);
+        const cwd = url.searchParams.get("cwd") ?? undefined;
+        const sessions = await listSessions(projectSlug, agent);
+        const [context, patterns, schedule] = await Promise.all([
+          loadProjectContext({ agent, projectSlug, cwd: cwd ?? sessions[0]?.projectPath }),
+          getProjectInsights(agent, projectSlug, { limit: 30 }),
+          getGovernanceSchedule(agent, projectSlug),
+        ]);
+        const eligibility = isGovernanceEligible(schedule, sessions.length);
+        return json({
+          context: toProjectContextSummary(context),
+          patterns,
+          sessions: sessions.slice(0, 20).map((s) => ({
+            id: s.id,
+            title: s.title,
+            mtimeMs: s.mtimeMs,
+            realTotal: s.realTotal,
+            hasCompaction: s.hasCompaction,
+          })),
+          schedule,
+          eligibility,
+        });
+      }
+
+      const governEligibleMatch = path.match(/^\/api\/projects\/([^/]+)\/govern\/eligible$/);
+      if (governEligibleMatch && req.method === "GET") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const projectSlug = decodeURIComponent(governEligibleMatch[1]!);
+        const sessions = await listSessions(projectSlug, agent);
+        const schedule = await getGovernanceSchedule(agent, projectSlug);
+        return json({ ...isGovernanceEligible(schedule, sessions.length), schedule, sessionCount: sessions.length });
+      }
+
+      const projectContextSummaryMatch = path.match(/^\/api\/projects\/([^/]+)\/context\/summary$/);
+      if (projectContextSummaryMatch && req.method === "GET") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const projectSlug = decodeURIComponent(projectContextSummaryMatch[1]!);
+        const cwd = url.searchParams.get("cwd") ?? undefined;
+        const snapshot = await loadProjectContext({ agent, projectSlug, cwd });
+        return json(toProjectContextSummary(snapshot));
+      }
+
+      const projectContextMatch = path.match(/^\/api\/projects\/([^/]+)\/context$/);
+      if (projectContextMatch && req.method === "GET") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const projectSlug = decodeURIComponent(projectContextMatch[1]!);
+        const cwd = url.searchParams.get("cwd") ?? undefined;
+        const snapshot = await loadProjectContext({ agent, projectSlug, cwd });
+        return json({
+          projectRoot: snapshot.projectRoot,
+          verified: snapshot.verified,
+          source: snapshot.source,
+          warning: snapshot.warning,
+          inventoryHash: snapshot.inventoryHash,
+          files: snapshot.files.map((f) => ({
+            relativePath: f.relativePath,
+            sizeBytes: f.sizeBytes,
+            hash: f.hash,
+            truncated: f.truncated,
+            content: f.content,
+          })),
+        });
+      }
+
+      const sessionGovernMatch = path.match(/^\/api\/sessions\/([^/]+)\/govern$/);
+      if (sessionGovernMatch && req.method === "POST") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const sessionId = sessionGovernMatch[1]!;
+        const body = await readJsonBody(req);
+        const result = await runSessionGovernancePipeline({
+          agent,
+          sessionId,
+          provider: body.provider as LlmProviderKind | undefined,
+          model: body.model as string | undefined,
+          locale: (body.locale as "ar" | "en") ?? "en",
+          force: body.force !== false,
+          mode: (body.mode as "quick" | "standard" | "full") ?? "standard",
+          autoApply: body.autoApply === true || process.env.GOVERNANCE_AUTO_APPLY === "1",
+        });
+        return json(result);
+      }
+
+      const projectGovernMatch = path.match(/^\/api\/projects\/([^/]+)\/govern$/);
+      if (projectGovernMatch && req.method === "POST") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const projectSlug = decodeURIComponent(projectGovernMatch[1]!);
+        const body = await readJsonBody(req);
+        const result = await runProjectGovernancePipeline({
+          agent,
+          projectSlug,
+          provider: body.provider as LlmProviderKind | undefined,
+          model: body.model as string | undefined,
+          locale: (body.locale as "ar" | "en") ?? "en",
+          force: body.force !== false,
+          mode: (body.mode as "quick" | "standard" | "full") ?? "standard",
+          autoApply: body.autoApply === true || process.env.GOVERNANCE_AUTO_APPLY === "1",
+        });
+        return json(result);
+      }
+
+      const governanceGetMatch = path.match(/^\/api\/governance\/([^/]+)$/);
+      if (governanceGetMatch && req.method === "GET") {
+        const pipelineId = governanceGetMatch[1]!;
+        const result = await getGovernancePipeline(pipelineId);
+        if (!result) return notFound("pipeline not found");
+        return json(result);
+      }
+
+      const governanceCancelMatch = path.match(/^\/api\/governance\/([^/]+)\/cancel$/);
+      if (governanceCancelMatch && req.method === "POST") {
+        const pipelineId = governanceCancelMatch[1]!;
+        const result = await cancelGovernancePipeline(pipelineId);
+        if (!result) return notFound("pipeline not found");
+        return json(result);
+      }
+
+      const governanceResumeMatch = path.match(/^\/api\/governance\/([^/]+)\/resume$/);
+      if (governanceResumeMatch && req.method === "POST") {
+        const pipelineId = governanceResumeMatch[1]!;
+        const result = await resumeGovernancePipeline(pipelineId);
+        if (!result) return notFound("pipeline not found");
+        return json(result);
+      }
+
+      const playbookMatch = path.match(/^\/api\/projects\/([^/]+)\/playbook$/);
+      if (playbookMatch && req.method === "GET") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const projectSlug = decodeURIComponent(playbookMatch[1]!);
+        const format = url.searchParams.get("format") ?? "md";
+        const govern = await runProjectGovernancePipeline({
+          agent,
+          projectSlug,
+          locale: (url.searchParams.get("locale") as "ar" | "en") ?? "en",
+          force: url.searchParams.get("refresh") === "true",
+        });
+        const save = url.searchParams.get("save") === "true";
+        let savedPath: string | undefined;
+        if (save && govern.projectRoot && govern.playbookMarkdown) {
+          savedPath = await exportPlaybookToProject(govern.projectRoot, govern.playbookMarkdown);
+        }
+        if (format === "json") return json({ ...govern, savedPath });
+        return new Response(govern.playbookMarkdown ?? "", {
+          headers: {
+            "content-type": "text/markdown",
+            "access-control-allow-origin": "*",
+          },
+        });
       }
 
       const snapshotMatch = path.match(/^\/api\/sessions\/([^/]+)\/snapshot$/);
@@ -274,10 +475,10 @@ const server = Bun.serve({
         const sessionId = snapshotMatch[1]!;
         const filePath = await findSessionById(sessionId, agent);
         if (!filePath) return notFound("session not found");
-        const st = await stat(filePath);
-        const cached = await readCached(agent, sessionId, st.mtimeMs);
+        const mtimeMs = await resolveSessionSourceMtimeMs(filePath, agent);
+        const cached = await readCached(agent, sessionId, mtimeMs);
         if (cached) return json({ ...cached, fromCache: true });
-        const snap = await computeSnapshot(filePath, st.mtimeMs, agent);
+        const snap = await computeSnapshot(filePath, mtimeMs, agent);
         await writeCached(snap);
         return json({ ...snap, fromCache: false });
       }

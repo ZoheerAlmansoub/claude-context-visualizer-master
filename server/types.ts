@@ -62,9 +62,23 @@ export type AnalyzeType =
   | "artifact-blueprint"
   | "memory-file-drafts"
   | "agent-orchestration"
-  | "agentic-lessons";
+  | "agentic-lessons"
+  | "project-health-report"
+  | "user-ai-fluency"
+  | "user-growth-plan"
+  | "memory-diff"
+  | "rule-dedup"
+  | "compaction-recovery"
+  | "mcp-tool-audit"
+  | "project-synthesis";
 
-export type AnalysisCategory = "overview" | "context" | "loops" | "artifacts" | "learning";
+export type AnalysisCategory =
+  | "overview"
+  | "context"
+  | "loops"
+  | "artifacts"
+  | "learning"
+  | "governance";
 
 export type ArtifactKind = "skill" | "rule" | "tool-hint" | "hook" | "subagent";
 
@@ -115,6 +129,91 @@ export type GeneratedArtifact = {
   confidence: "high" | "medium" | "low";
 };
 
+export type RootCauseItem = {
+  id: string;
+  category: string;
+  title: string;
+  impact: "critical" | "high" | "medium" | "low";
+  description: string;
+  sessionIds: string[];
+  estimatedTokenWaste?: number;
+  fixPriority: number;
+  recommendation: string;
+};
+
+export type FluencyDimension = {
+  id: string;
+  label: string;
+  score: number;
+  evidence: string;
+  examples: Array<{ turn: number; quote: string }>;
+};
+
+export type GrowthArea = {
+  area: string;
+  whyItMatters: string;
+  concreteActions: string[];
+  suggestedRule?: string;
+  suggestedSkill?: string;
+  practiceExercise?: string;
+};
+
+export type MemoryDiffItem = {
+  path: string;
+  action: "create" | "update" | "append" | "skip";
+  existingSummary: string;
+  proposedSummary: string;
+  diffPreview: string;
+  rationale: string;
+};
+
+export type RuleDedupItem = {
+  name: string;
+  proposedPath: string;
+  existingPath?: string;
+  action: "create" | "merge" | "replace" | "skip";
+  rationale: string;
+  content: string;
+};
+
+export type CompactionRecoveryItem = {
+  priority: "critical" | "high" | "medium";
+  action: string;
+  rationale: string;
+  suggestedMemoryPath?: string;
+  suggestedContent?: string;
+};
+
+export type McpToolFinding = {
+  toolName: string;
+  callCount: number;
+  errorCount: number;
+  severity: "critical" | "high" | "medium" | "low";
+  pattern: string;
+  recommendation: string;
+  turns: number[];
+};
+
+export type ProjectTheme = {
+  id: string;
+  title: string;
+  sessions: string[];
+  summary: string;
+  status: "active" | "resolved" | "blocked";
+};
+
+export type ProjectDecision = {
+  decision: string;
+  rationale: string;
+  sessionIds: string[];
+};
+
+export type MemoryGap = {
+  path: string;
+  gap: string;
+  suggestedAction: string;
+};
+
 export type StructuredAnalysis =
   | { kind: "token-audit"; wasteItems: TokenWasteItem[]; summary: string }
   | { kind: "prevention-rules"; rules: GeneratedArtifact[]; summary: string }
@@ -125,6 +224,39 @@ export type StructuredAnalysis =
       agents: SubAgentSpec[];
       summary: string;
       whenSwarm: string;
+    }
+  | { kind: "project-health"; healthScore: number; rootCauses: RootCauseItem[]; summary: string; openRisks: string[] }
+  | {
+      kind: "user-fluency";
+      overallScore: number;
+      dimensions: FluencyDimension[];
+      strengths: string[];
+      growthAreas: GrowthArea[];
+      summary: string;
+    }
+  | {
+      kind: "user-growth";
+      overallScore: number;
+      weeklyPlan: Array<{ day: string; focus: string; task: string }>;
+      growthAreas: GrowthArea[];
+      summary: string;
+    }
+  | { kind: "memory-diff"; items: MemoryDiffItem[]; summary: string }
+  | { kind: "rule-dedup"; items: RuleDedupItem[]; summary: string }
+  | {
+      kind: "compaction-recovery";
+      recoveryItems: CompactionRecoveryItem[];
+      summary: string;
+      boundaryTurn?: number;
+    }
+  | { kind: "mcp-tool-audit"; findings: McpToolFinding[]; summary: string }
+  | {
+      kind: "project-synthesis";
+      themes: ProjectTheme[];
+      decisions: ProjectDecision[];
+      memoryGaps: MemoryGap[];
+      driftWarnings: string[];
+      summary: string;
     };
 
 export type AnalysisSource = "llm" | "heuristic" | "hybrid";
@@ -199,6 +331,46 @@ export type SessionListItem = {
   realTotal: number | null;
   model: string | null;
   hasCompaction: boolean;
+};
+
+export type ProjectContextSummary = {
+  projectRoot: string;
+  verified: boolean;
+  source: string;
+  warning?: string;
+  inventoryHash: string;
+  files: Array<{ relativePath: string; sizeBytes: number; hash: string; truncated: boolean }>;
+};
+
+export type GovernancePipelineMode = "quick" | "standard" | "full";
+
+export type GovernancePipelineStatus = "running" | "complete" | "cancelled" | "error";
+
+export type GovernancePipelineStep = {
+  type: AnalyzeType;
+  status: "pending" | "running" | "done" | "error" | "skipped";
+  analysisId?: string;
+  error?: string;
+};
+
+export type GovernancePipelineResult = {
+  pipelineId: string;
+  scope: "session" | "project";
+  mode?: GovernancePipelineMode;
+  status?: GovernancePipelineStatus;
+  cancelled?: boolean;
+  steps: GovernancePipelineStep[];
+  playbookMarkdown?: string;
+  projectRoot?: string;
+  updatedAt?: string;
+  agent?: AgentKind;
+  sessionId?: string;
+  projectSlug?: string;
+  provider?: LlmProviderKind;
+  model?: string;
+  locale?: "ar" | "en";
+  autoApply?: boolean;
+  applyResults?: Array<{ path: string; ok: boolean; error?: string }>;
 };
 
 export type ProjectInfo = {

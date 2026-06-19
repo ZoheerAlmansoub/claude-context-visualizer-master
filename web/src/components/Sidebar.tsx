@@ -39,6 +39,17 @@ function fmtDate(ms: number): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+function sessionMatchesQuery(s: SessionListItem, q: string): boolean {
+  return (
+    s.title.toLowerCase().includes(q) ||
+    s.id.toLowerCase().includes(q) ||
+    s.projectPath.toLowerCase().includes(q) ||
+    s.project.toLowerCase().includes(q) ||
+    (s.model?.toLowerCase().includes(q) ?? false) ||
+    (s.hasCompaction && "compacted".includes(q))
+  );
+}
+
 export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, onToggle, onOpenLlmSettings }: Props) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [sessionsByProject, setSessionsByProject] = useState<Record<string, SessionListItem[]>>({});
@@ -67,13 +78,40 @@ export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, o
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
-    if (!q) return projects;
-    return projects.filter(
-      (p) =>
-        p.path.toLowerCase().includes(q) ||
-        (sessionsByProject[p.slug] ?? []).some((s) => s.title.toLowerCase().includes(q)),
-    );
+    if (!q) {
+      return projects.map((p) => ({
+        project: p,
+        sessions: sessionsByProject[p.slug] ?? [],
+        loading: !sessionsByProject[p.slug],
+      }));
+    }
+    return projects
+      .map((p) => {
+        const allSessions = sessionsByProject[p.slug] ?? [];
+        const matchedSessions = allSessions.filter((s) => sessionMatchesQuery(s, q));
+        const projectMatch =
+          p.path.toLowerCase().includes(q) ||
+          p.slug.toLowerCase().includes(q) ||
+          matchedSessions.length > 0;
+        if (!projectMatch) return null;
+        return {
+          project: p,
+          sessions: matchedSessions.length ? matchedSessions : allSessions,
+          loading: !sessionsByProject[p.slug],
+        };
+      })
+      .filter((x): x is { project: ProjectInfo; sessions: SessionListItem[]; loading: boolean } => x !== null);
   }, [projects, query, sessionsByProject]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) return;
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      for (const { project } of filtered) n.add(project.slug);
+      return n;
+    });
+  }, [query, filtered]);
 
   if (collapsed) {
     return (
@@ -118,7 +156,7 @@ export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, o
           ))}
         </div>
         <input
-          placeholder="Search projects or titles…"
+          placeholder="Search projects, paths, titles, models…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -126,7 +164,7 @@ export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, o
       {filtered.length === 0 && (
         <div className="empty-state-sidebar">No matches.</div>
       )}
-      {filtered.map((p) => {
+      {filtered.map(({ project: p, sessions, loading: sessionsLoading }) => {
         if (p.unavailableReason) {
           return (
             <div key={`${p.agent}:${p.slug}`} className="agent-unavailable">
@@ -155,7 +193,7 @@ export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, o
               <span className="label">{shortLabel}</span>
               <span className="count">{p.sessionCount}</span>
             </div>
-            {isOpen && (sessionsByProject[p.slug] ?? []).map((s) => (
+            {isOpen && sessions.map((s) => (
               <div
                 key={`${s.agent}:${s.id}`}
                 className={`session-row${selected === s.id ? " selected" : ""}`}
@@ -171,9 +209,14 @@ export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, o
                 </div>
               </div>
             ))}
-            {isOpen && !sessionsByProject[p.slug] && (
+            {isOpen && sessionsLoading && (
               <div className="loading" style={{ padding: "12px 16px", textAlign: "left" }}>
                 Loading…
+              </div>
+            )}
+            {isOpen && !sessionsLoading && sessions.length === 0 && query.trim() && (
+              <div className="empty-state-sidebar" style={{ padding: "8px 16px" }}>
+                No session matches.
               </div>
             )}
           </div>

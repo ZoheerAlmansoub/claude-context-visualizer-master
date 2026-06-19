@@ -1,7 +1,10 @@
-import type { GeneratedArtifact, SessionTranscript, LlmProviderKind } from "../types.ts";
+import type { GeneratedArtifact, SessionTranscript, LlmProviderKind, AgentKind } from "../types.ts";
 import { detectSessionPatterns } from "../insights/pattern-detector.ts";
 import { buildArtifactPrompt } from "../llm/prompts.ts";
 import { getProvider, resolveModel } from "../llm/router.ts";
+import {
+  renderArtifactBodyForAgent,
+} from "./agent-registry.ts";
 
 export function renderSkillMarkdown(artifact: GeneratedArtifact): string {
   const slug = artifact.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -52,39 +55,32 @@ ${artifact.content}
 `;
 }
 
-export function renderArtifactBody(artifact: GeneratedArtifact): string {
-  switch (artifact.kind) {
-    case "skill":
-      return renderSkillMarkdown(artifact);
-    case "rule":
-      return renderRuleMdc(artifact);
-    case "hook":
-      return renderHookMarkdown(artifact);
-    case "subagent":
-      return renderSubAgentMarkdown(artifact);
-    default:
-      return `## Tool hint: ${artifact.name}\n\n${artifact.content}`;
-  }
+export function renderArtifactBody(artifact: GeneratedArtifact, agent: AgentKind = "cursor"): string {
+  return renderArtifactBodyForAgent(agent, artifact);
 }
 
-function heuristicArtifacts(transcript: SessionTranscript): GeneratedArtifact[] {
+function heuristicArtifacts(transcript: SessionTranscript, agent: AgentKind): GeneratedArtifact[] {
   const patterns = detectSessionPatterns(transcript);
   return patterns
     .filter((p) => p.count >= 2)
     .slice(0, 5)
-    .map((p) => ({
-      kind: p.suggestedArtifact?.kind ?? ("rule" as const),
-      name: p.label.replace(/\s+/g, "-").slice(0, 40),
-      description: p.description,
-      trigger: `When ${p.kind} pattern detected`,
-      content: p.recommendation,
-      rendered: "",
-      sourceTurns: [],
-      confidence: p.count >= 4 ? ("high" as const) : ("medium" as const),
-    }))
+    .map((p) => {
+      const enriched = enrichPatternWithArtifact(p, agent);
+      const base = enriched.suggestedArtifact;
+      return {
+        kind: base?.kind ?? ("rule" as const),
+        name: base?.name ?? p.label.replace(/\s+/g, "-").slice(0, 40),
+        description: p.description,
+        trigger: base?.trigger ?? `When ${p.kind} pattern detected`,
+        content: base?.content ?? p.recommendation,
+        rendered: "",
+        sourceTurns: [],
+        confidence: p.count >= 4 ? ("high" as const) : ("medium" as const),
+      };
+    })
     .map((a) => ({
       ...a,
-      rendered: renderArtifactBody(a),
+      rendered: renderArtifactBodyForAgent(agent, a),
     }));
 }
 
@@ -95,9 +91,11 @@ export async function generateArtifacts(
     provider?: LlmProviderKind;
     model?: string;
     locale?: "ar" | "en";
+    agent?: AgentKind;
   } = {},
 ): Promise<GeneratedArtifact[]> {
-  const heuristic = heuristicArtifacts(transcript);
+  const agent = opts.agent ?? transcript.agent;
+  const heuristic = heuristicArtifacts(transcript, agent);
   if (!opts.useLlm) return heuristic;
 
   try {
@@ -125,7 +123,7 @@ export async function generateArtifacts(
     const parsed = JSON.parse(jsonMatch[0]) as GeneratedArtifact[];
     return parsed.map((a) => ({
       ...a,
-      rendered: renderArtifactBody(a),
+      rendered: renderArtifactBodyForAgent(agent, a),
     }));
   } catch {
     return heuristic;

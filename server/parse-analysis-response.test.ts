@@ -101,6 +101,15 @@ describe("parseAnalysisResponse", () => {
     }
   });
 
+  test("buildHeuristicFallbackResult fills project-synthesis from patterns", () => {
+    const result = buildHeuristicFallbackResult("project-synthesis", [retryPattern], "en");
+    expect(result?.analysisSource).toBe("heuristic");
+    expect(result?.structured?.kind).toBe("project-synthesis");
+    if (result?.structured?.kind === "project-synthesis") {
+      expect(result.structured.themes.length).toBeGreaterThan(0);
+    }
+  });
+
   test("memory-file-drafts excludes cursor rules paths", () => {
     const raw = JSON.stringify({
       summary: "Context to persist",

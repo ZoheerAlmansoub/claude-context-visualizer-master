@@ -12,9 +12,16 @@ export const ANALYSIS_TYPE_CATEGORY: Record<AnalyzeType, AnalysisCategory> = {
   "memory-file-drafts": "artifacts",
   "agent-orchestration": "artifacts",
   "agentic-lessons": "learning",
+  "project-health-report": "governance",
+  "user-ai-fluency": "governance",
+  "user-growth-plan": "governance",
+  "memory-diff": "governance",
+  "rule-dedup": "governance",
+  "compaction-recovery": "context",
+  "mcp-tool-audit": "loops",
+  "project-synthesis": "governance",
 };
 
-/** Canonical list — always shown in the UI (merged with server metadata when available). */
 export const FALLBACK_ANALYSIS_TYPES: LlmConfig["analysisTypes"] = [
   { id: "summarize", label: "Summarize", description: "Goals, decisions, and key outcomes", category: "overview" },
   { id: "intent-map", label: "Intent map", description: "User intents and first principles", category: "overview" },
@@ -24,17 +31,30 @@ export const FALLBACK_ANALYSIS_TYPES: LlmConfig["analysisTypes"] = [
   { id: "loop-diagnosis", label: "Loop diagnosis", description: "Root cause of retry loops and prevention rules", category: "loops" },
   { id: "tool-hardening", label: "Tool hardening", description: "Per-tool error patterns and pre-check rules", category: "loops" },
   { id: "artifact-blueprint", label: "Artifact blueprint", description: "Skills, rules, hooks, and sub-agent specs", category: "artifacts" },
-  { id: "memory-file-drafts", label: "Memory file drafts", description: "Persistent context: AGENTS.md, CLAUDE.md, design.md (not rules)", category: "artifacts" },
+  { id: "memory-file-drafts", label: "Memory file drafts", description: "Persistent context: AGENTS.md, CLAUDE.md, design.md", category: "artifacts" },
   { id: "agent-orchestration", label: "Agent orchestration", description: "Sub-agents, swarms, and delegation design", category: "artifacts" },
   { id: "agentic-lessons", label: "Agentic lessons", description: "Principles and patterns for agentic engineering", category: "learning" },
+  { id: "project-health-report", label: "Project health report", description: "Cross-session root causes and health score", category: "governance" },
+  { id: "user-ai-fluency", label: "User AI fluency", description: "Assess user skill at directing AI agents", category: "governance" },
+  { id: "user-growth-plan", label: "User growth plan", description: "Cross-session plan to improve AI collaboration", category: "governance" },
+  { id: "memory-diff", label: "Memory diff", description: "Compare memory updates vs files on disk", category: "governance" },
+  { id: "rule-dedup", label: "Rule deduplication", description: "Merge or skip duplicate rules", category: "governance" },
+  { id: "compaction-recovery", label: "Compaction recovery", description: "Recover context lost after compaction", category: "context" },
+  { id: "mcp-tool-audit", label: "MCP tool audit", description: "Audit MCP tool errors and redundancy", category: "loops" },
+  { id: "project-synthesis", label: "Project synthesis", description: "Cross-session themes, decisions, and memory gaps", category: "governance" },
 ];
 
 export const EXPECTED_ANALYSIS_TYPE_COUNT = FALLBACK_ANALYSIS_TYPES.length;
 
-/**
- * Merge server types over the canonical list so new types always appear in the UI
- * even when the API server has not been restarted yet.
- */
+export const CATEGORY_ORDER: AnalysisCategory[] = [
+  "overview",
+  "context",
+  "loops",
+  "artifacts",
+  "governance",
+  "learning",
+];
+
 export function normalizeAnalysisTypes(
   types: Array<{
     id: AnalyzeType;
@@ -59,7 +79,6 @@ export function normalizeAnalysisTypes(
     };
   });
 
-  // Include any future server-only types not in our canonical list
   for (const t of types) {
     if (!merged.some((m) => m.id === t.id)) {
       merged.push({
@@ -78,7 +97,7 @@ export function isStaleAnalysisTypesResponse(serverCount: number): boolean {
 
 export function groupAnalysisTypes(
   types: LlmConfig["analysisTypes"],
-  categoryOrder: AnalysisCategory[],
+  categoryOrder: AnalysisCategory[] = CATEGORY_ORDER,
 ): Array<{ category: AnalysisCategory; types: LlmConfig["analysisTypes"] }> {
   return categoryOrder
     .map((category) => ({

@@ -1,0 +1,19 @@
+{
+  "id": "msg-asst-1",
+  "sessionID": "sess-demo",
+  "role": "assistant",
+  "time": { "created": 1700000002000, "completed": 1700000003000 },
+  "parentID": "msg-user-1",
+  "modelID": "claude-sonnet-4",
+  "providerID": "anthropic",
+  "mode": "build",
+  "agent": "build",
+  "path": { "cwd": "D:\\dev\\demo-project", "root": "D:\\dev\\demo-project" },
+  "cost": 0.01,
+  "tokens": {
+    "input": 1200,
+    "output": 400,
+    "reasoning": 0,
+    "cache": { "read": 800, "write": 100 }
+  }
+}

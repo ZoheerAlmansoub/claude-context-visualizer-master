@@ -24,13 +24,23 @@ import {
 import { getProvider, resolveModel } from "./llm/router.ts";
 import { getLlmConfig } from "./config.ts";
 import type { LLMProvider } from "./llm/provider.ts";
+import { loadProjectContext, type ProjectContextSnapshot } from "./project-context.ts";
 
 function analysisCacheDir(agent: string, sessionId: string): string {
   return join(CACHE_DIR, "analysis", agent, sessionId);
 }
 
-function comboKey(type: AnalyzeType, provider: LlmProviderKind, model: string, locale: string): string {
-  return createHash("sha256").update(`${type}:${provider}:${model}:${locale}`).digest("hex").slice(0, 12);
+function comboKey(
+  type: AnalyzeType,
+  provider: LlmProviderKind,
+  model: string,
+  locale: string,
+  transcriptKey: string,
+  projectInventoryHash?: string,
+): string {
+  const base = `${type}:${provider}:${model}:${locale}:${transcriptKey}`;
+  const withProject = projectInventoryHash ? `${base}:${projectInventoryHash}` : base;
+  return createHash("sha256").update(withProject).digest("hex").slice(0, 12);
 }
 
 function runAnalysisId(combo: string, createdAt: string, force: boolean): string {
@@ -85,14 +95,23 @@ async function callAnalysisLlm(
   type: AnalyzeType,
   transcript: SessionTranscript,
   locale: "ar" | "en",
-  opts: { compact: boolean; ultraCompact: boolean; gatewaySensitive: boolean },
+  opts: {
+    compact: boolean;
+    ultraCompact: boolean;
+    gatewaySensitive: boolean;
+    projectContext?: ProjectContextSnapshot;
+    crossSessionPatterns?: string;
+  },
 ) {
   const limits = contextLimitsFor(type, {
     compact: opts.compact,
     ultraCompact: opts.ultraCompact,
     gatewaySensitive: opts.gatewaySensitive,
   });
-  const ctx = buildAnalysisTranscriptContext(transcript, type, limits);
+  const ctx = buildAnalysisTranscriptContext(transcript, type, limits, {
+    projectContext: opts.projectContext,
+    crossSessionPatterns: opts.crossSessionPatterns,
+  });
   const { system, user } = buildAnalysisPrompt(type, ctx, locale);
 
   const response = await llm.complete({
@@ -137,6 +156,10 @@ async function runAnalysisLlmWithRetries(
   transcript: SessionTranscript,
   locale: "ar" | "en",
   gatewaySensitive: boolean,
+  contextExtras: {
+    projectContext?: ProjectContextSnapshot;
+    crossSessionPatterns?: string;
+  },
 ): Promise<
   | { mode: "llm"; patterns: RecurringPattern[]; responseText: string; tokensUsed?: number }
   | { mode: "heuristic"; patterns: RecurringPattern[]; parsed: ReturnType<typeof buildHeuristicFallbackResult> }
@@ -149,6 +172,7 @@ async function runAnalysisLlmWithRetries(
       const result = await callAnalysisLlm(llm, model, type, transcript, locale, {
         ...tier,
         gatewaySensitive,
+        ...contextExtras,
       });
       return {
         mode: "llm",
@@ -170,8 +194,13 @@ async function runAnalysisLlmWithRetries(
       ultraCompact: true,
       gatewaySensitive,
     });
-    const ctx = buildAnalysisTranscriptContext(transcript, type, limits);
-    const parsed = buildHeuristicFallbackResult(type, ctx.patterns, locale);
+    const ctx = buildAnalysisTranscriptContext(transcript, type, limits, contextExtras);
+    const parsed = buildHeuristicFallbackResult(type, ctx.patterns, locale, {
+      agent: transcript.agent,
+      projectContext: contextExtras.projectContext,
+      toolEvents: transcript.toolEvents,
+      compactionBoundaryIndex: transcript.compactionBoundaryIndex,
+    });
     if (parsed) {
       return { mode: "heuristic", patterns: ctx.patterns, parsed };
     }
@@ -188,14 +217,41 @@ export async function runAnalysis(
     model?: string;
     locale?: "ar" | "en";
     force?: boolean;
+    transcriptMtimeMs?: number;
+    projectSlug?: string;
+    projectPath?: string;
+    crossSessionPatterns?: string;
+    projectContext?: ProjectContextSnapshot;
   },
 ): Promise<AnalyzeResult> {
   const provider = opts.provider ?? getLlmConfig().defaultProvider;
   const model = resolveModel(provider, opts.model);
   const locale = opts.locale ?? "en";
   const force = opts.force ?? false;
+
+  let projectContext = opts.projectContext;
+  if (!projectContext && opts.projectSlug) {
+    projectContext = await loadProjectContext({
+      agent: transcript.agent,
+      projectSlug: opts.projectSlug,
+      cwd: opts.projectPath,
+    });
+  }
+
+  const transcriptKey = createHash("sha256")
+    .update(`${transcript.filePath}:${opts.transcriptMtimeMs ?? 0}`)
+    .digest("hex")
+    .slice(0, 8);
+
   const dir = analysisCacheDir(transcript.agent, transcript.sessionId);
-  const combo = comboKey(opts.type, provider, model, locale);
+  const combo = comboKey(
+    opts.type,
+    provider,
+    model,
+    locale,
+    transcriptKey,
+    projectContext?.inventoryHash,
+  );
 
   if (!force) {
     const existing = latestForCombo(await readAllAnalyses(dir), opts.type, provider, model, locale);
@@ -212,6 +268,10 @@ export async function runAnalysis(
     transcript,
     locale,
     gatewaySensitive,
+    {
+      projectContext,
+      crossSessionPatterns: opts.crossSessionPatterns,
+    },
   );
 
   let patterns: RecurringPattern[] = llmResult.patterns;
@@ -227,7 +287,12 @@ export async function runAnalysis(
   } else {
     responseText = llmResult.responseText;
     tokensUsed = llmResult.tokensUsed;
-    parsed = parseAnalysisResponse(opts.type, responseText, locale, patterns);
+    parsed = parseAnalysisResponse(opts.type, responseText, locale, patterns, {
+      agent: transcript.agent,
+      projectContext,
+      toolEvents: transcript.toolEvents,
+      compactionBoundaryIndex: transcript.compactionBoundaryIndex,
+    });
   }
 
   const createdAt = new Date().toISOString();

@@ -1,5 +1,5 @@
 import { readdir, stat, open } from "node:fs/promises";
-import { join, basename } from "node:path";
+import { join, basename, dirname } from "node:path";
 import {
   decodeProjectSlugForAgent,
   getAgentConfig,
@@ -8,7 +8,7 @@ import { streamJSONL } from "./jsonl.ts";
 import type { AgentKind, SessionListItem, ProjectInfo } from "./types.ts";
 import { realTotalFromUsage } from "./usage.ts";
 import { extractTitle } from "./text-utils.ts";
-import { opencodeProjectStatus } from "./opencode-loader.ts";
+import { listOpenCodeProjects, listOpenCodeSessions, findOpenCodeSessionById, parseOpenCodeSessionPath } from "./opencode-loader.ts";
 
 const IO_CONCURRENCY = 16;
 
@@ -59,20 +59,6 @@ async function firstCwdQuick(filePath: string): Promise<string | null> {
   return null;
 }
 
-async function opencodeUnavailableProject(): Promise<ProjectInfo[]> {
-  const status = await opencodeProjectStatus();
-  return [
-    {
-      agent: "opencode",
-      slug: "__unavailable__",
-      path: "OpenCode transcripts unavailable",
-      sessionCount: 0,
-      latestMtimeMs: 0,
-      unavailableReason: status.reason,
-    },
-  ];
-}
-
 async function listCursorSessionFiles(projectDir: string): Promise<string[]> {
   const transcriptsDir = join(projectDir, "agent-transcripts");
   let entries;
@@ -94,7 +80,7 @@ async function listCursorSessionFiles(projectDir: string): Promise<string[]> {
 }
 
 export async function listProjects(agent: AgentKind = "claude"): Promise<ProjectInfo[]> {
-  if (agent === "opencode") return opencodeUnavailableProject();
+  if (agent === "opencode") return listOpenCodeProjects();
 
   const sessionsDir = getAgentConfig(agent).sessionsDir;
   const entries = await readdir(sessionsDir, { withFileTypes: true });
@@ -263,7 +249,7 @@ export async function indexSessionFile(filePath: string): Promise<{
 }
 
 export async function listSessions(projectSlug: string, agent: AgentKind = "claude"): Promise<SessionListItem[]> {
-  if (agent === "opencode") return [];
+  if (agent === "opencode") return listOpenCodeSessions(projectSlug);
 
   if (agent === "cursor") {
     const projectDir = join(getAgentConfig(agent).sessionsDir, projectSlug);
@@ -282,7 +268,7 @@ export async function listSessions(projectSlug: string, agent: AgentKind = "clau
           agent,
           id: meta.id,
           project: projectSlug,
-          projectPath: decodeProjectSlugForAgent(agent, projectSlug),
+          projectPath: meta.cwd ?? decodeProjectSlugForAgent(agent, projectSlug),
           filePath,
           mtimeMs: st.mtimeMs,
           title: meta.title,
@@ -295,7 +281,7 @@ export async function listSessions(projectSlug: string, agent: AgentKind = "clau
           agent,
           id,
           project: projectSlug,
-          projectPath: decodeProjectSlugForAgent(agent, projectSlug),
+          projectPath: meta.cwd ?? decodeProjectSlugForAgent(agent, projectSlug),
           filePath,
           mtimeMs: st.mtimeMs,
           title: "(failed to read)",
@@ -357,7 +343,7 @@ export async function listSessions(projectSlug: string, agent: AgentKind = "clau
 }
 
 export async function findSessionById(sessionId: string, agent: AgentKind = "claude"): Promise<string | null> {
-  if (agent === "opencode") return null;
+  if (agent === "opencode") return findOpenCodeSessionById(sessionId);
 
   const sessionsDir = getAgentConfig(agent).sessionsDir;
 
@@ -384,4 +370,28 @@ export async function findSessionById(sessionId: string, agent: AgentKind = "cla
     } catch {}
   }
   return null;
+}
+
+export async function findSessionMeta(
+  sessionId: string,
+  agent: AgentKind = "claude",
+): Promise<SessionListItem | null> {
+  const filePath = await findSessionById(sessionId, agent);
+  if (!filePath) return null;
+
+  let projectSlug = "";
+  if (agent === "opencode") {
+    projectSlug = parseOpenCodeSessionPath(filePath)?.projectId ?? "";
+  } else if (agent === "cursor") {
+    const parts = filePath.split(/[/\\]/);
+    const idx = parts.indexOf("agent-transcripts");
+    projectSlug = idx > 0 ? parts[idx - 1]! : "";
+  } else {
+    projectSlug = basename(dirname(filePath));
+  }
+
+  if (!projectSlug) return null;
+
+  const sessions = await listSessions(projectSlug, agent);
+  return sessions.find((s) => s.id === sessionId) ?? null;
 }
