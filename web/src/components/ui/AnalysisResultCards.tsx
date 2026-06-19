@@ -42,6 +42,7 @@ const LABELS = {
     recommendation: "Recommendation",
     artifacts: "Suggested artifacts",
     memoryFiles: "Memory file drafts",
+    memoryFilesHint: "Persistent project context (AGENTS.md, CLAUDE.md, design.md) — not Cursor rules.",
     orchestration: "Agent orchestration",
     whenSwarm: "When to use swarm",
     copy: "Copy",
@@ -74,6 +75,7 @@ const LABELS = {
     recommendation: "التوصية",
     artifacts: "Artifacts مقترحة",
     memoryFiles: "مسودات ملفات الذاكرة",
+    memoryFilesHint: "سياق المشروع الدائم (AGENTS.md, CLAUDE.md, design.md) — وليس قواعد Cursor.",
     orchestration: "تنسيق الوكلاء",
     whenSwarm: "متى تستخدم swarm",
     copy: "نسخ",
@@ -255,7 +257,7 @@ function MemoryFileCard({
   return (
     <article className="artifact-card analysis-artifact-card">
       <div className="artifact-header">
-        <span className="badge badge-rule">{file.action}</span>
+        <span className="badge badge-memory">{file.action}</span>
         <strong>{file.path}</strong>
       </div>
       <p className="artifact-desc">
@@ -403,6 +405,7 @@ function StructuredBody({
             <h4>
               <Layers size={16} /> {L.memoryFiles}
             </h4>
+            <p className="analysis-action-note">{L.memoryFilesHint}</p>
             <div className="artifact-list">
               {structured.files.map((f, i) => (
                 <MemoryFileCard

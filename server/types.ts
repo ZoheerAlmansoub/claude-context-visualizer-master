@@ -68,7 +68,15 @@ export type AnalysisCategory = "overview" | "context" | "loops" | "artifacts" | 
 
 export type ArtifactKind = "skill" | "rule" | "tool-hint" | "hook" | "subagent";
 
-export type LlmProviderKind = "anthropic" | "openai" | "ollama" | "nvidia";
+export type LlmProviderKind =
+  | "anthropic"
+  | "openai"
+  | "openrouter"
+  | "opencode-zen"
+  | "groq"
+  | "deepseek"
+  | "ollama"
+  | "nvidia";
 
 export type TokenWasteItem = {
   source: string;

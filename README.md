@@ -53,17 +53,21 @@ bun run dev
 
 ### Analysis (requires LLM)
 
-Configure in `.env`:
+Configure in `.env` or **Settings → LLM** in the app:
 
 ```
-NVIDIA_API_KEY=...
-NVIDIA_API_URL=https://integrate.api.nvidia.com/v1
-NVIDIA_TEXT_MODEL=nvidia/nemotron-3-ultra-550b-a55b
-DEFAULT_LLM_PROVIDER=nvidia
 ANTHROPIC_API_KEY=...
 OPENAI_API_KEY=...
+OPENROUTER_API_KEY=...
+OPENCODE_ZEN_API_KEY=...
+GROQ_API_KEY=...
+DEEPSEEK_API_KEY=...
+NVIDIA_API_KEY=...
 OLLAMA_BASE_URL=http://localhost:11434
+DEFAULT_LLM_PROVIDER=openrouter
 ```
+
+Supported providers: **Anthropic**, **OpenAI**, **OpenRouter**, **OpenCode Zen**, **Groq**, **DeepSeek**, **Ollama**, **NVIDIA NIM**.
 
 Analysis types (grouped by category):
 

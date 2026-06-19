@@ -47,6 +47,43 @@ function sessionMetaBlock(ctx: AnalysisTranscriptContext): string {
   return lines.join("\n");
 }
 
+function structuredSystemPrompt(type: AnalyzeType, lang: string): string {
+  if (type === "memory-file-drafts") {
+    return `You are an expert at drafting persistent PROJECT MEMORY files for AI coding agents.
+Respond ONLY with valid JSON (no markdown fences). Use ${lang} for all string values.
+
+This task is ONLY for memory/context documentation — NOT Cursor rules (.mdc), skills (SKILL.md), hooks, or tool-hints.
+If the session needs enforceable rules or skills, do NOT put them here; memory files hold durable facts, preferences, and project context.
+
+Critical rules:
+- Ground every file in session evidence: cite turns, user requests, and decisions from the context below.
+- Do NOT invent project facts not supported by the transcript.
+- Write file bodies as project memory (overview, stack, conventions, domain knowledge) — not trigger-based rules.
+- Prefer canonical repo memory paths over many new files.`;
+  }
+
+  if (type === "artifact-blueprint") {
+    return `You are an expert at designing Cursor agent artifacts (skills, rules, hooks, sub-agents).
+Respond ONLY with valid JSON (no markdown fences). Use ${lang} for all string values.
+
+Critical rules:
+- Ground every artifact in session evidence: cite turn numbers, tool names, and patterns from the context below.
+- Do NOT invent problems not supported by the transcript or detected patterns.
+- Prefer high-confidence items that prevent repeated mistakes or encode user preferences.
+- Do NOT output AGENTS.md, CLAUDE.md, or design.md here — those belong in memory-file-drafts analysis.`;
+  }
+
+  return `You are an expert AI agent session analyst specializing in context optimization, loop prevention, and agent artifact design.
+Respond ONLY with valid JSON (no markdown fences). Use ${lang} for all string values.
+
+Critical rules:
+- Ground every finding in session evidence: cite turn numbers, tool names, and patterns from the context below.
+- Do NOT invent problems not supported by the transcript or detected patterns.
+- Prioritize items that prevent repeated mistakes and reduce token waste.
+- When heuristic patterns are listed, address each relevant one explicitly.
+- Prefer high-confidence recommendations backed by multiple occurrences.`;
+}
+
 export function buildAnalysisPrompt(
   type: AnalyzeType,
   transcript: AnalysisTranscriptContext,
@@ -55,17 +92,7 @@ export function buildAnalysisPrompt(
   const lang = locale === "ar" ? "Arabic" : "English";
   const structured = isStructuredAnalysisType(type);
 
-  const system = structured
-    ? `You are an expert AI agent session analyst specializing in context optimization, loop prevention, and agent artifact design.
-Respond ONLY with valid JSON (no markdown fences). Use ${lang} for all string values.
-
-Critical rules:
-- Ground every finding in session evidence: cite turn numbers, tool names, and patterns from the context below.
-- Do NOT invent problems not supported by the transcript or detected patterns.
-- Prioritize items that prevent repeated mistakes and reduce token waste.
-- When heuristic patterns are listed, address each relevant one explicitly.
-- Prefer high-confidence recommendations backed by multiple occurrences.`
-    : `You are an expert AI agent session analyst. Respond in ${lang} using clear markdown. Be concise and actionable. Ground claims in session evidence.`;
+  const system = structured ? structuredSystemPrompt(type, lang) : `You are an expert AI agent session analyst. Respond in ${lang} using clear markdown. Be concise and actionable. Ground claims in session evidence.`;
 
   const context = [
     sessionMetaBlock(transcript),
@@ -184,20 +211,33 @@ Address every tool with 2+ errors in the session.`,
 Prioritize high-confidence items that prevent repeated mistakes or encode user preferences.
 Limit to 8 artifacts max; quality over quantity.`,
 
-    "memory-file-drafts": `Draft memory/context files for future agents. Respond with JSON:
+    "memory-file-drafts": `Draft persistent MEMORY / CONTEXT files so future agents inherit this session's knowledge. Respond with JSON:
 {
-  "summary": "overview",
+  "summary": "what durable context should persist beyond this session",
   "files": [
     {
-      "path": "AGENTS.md|agent.md|claude.md|design.md|.cursor/rules/example.mdc",
-      "purpose": "why this file",
+      "path": "AGENTS.md",
+      "purpose": "why this memory file exists",
       "action": "create|update|append",
-      "rationale": "why needed from this session",
-      "content": "full file content ready to save"
+      "rationale": "session evidence (turns, user requests, decisions)",
+      "content": "complete markdown file body ready to save"
     }
   ]
 }
-Only include files justified by session evidence. Each content field must be complete and ready to save.`,
+
+ALLOWED paths (memory/context only):
+- AGENTS.md or .cursor/AGENTS.md — repo-wide agent instructions & project overview
+- CLAUDE.md or claude.md — Cursor/Claude session context & coding conventions
+- design.md or docs/design.md — architecture & design decisions
+- docs/context/*.md — domain glossary, modules, business rules learned in session
+
+FORBIDDEN in this analysis (use artifact-blueprint or loop-diagnosis instead):
+- .cursor/rules/*.mdc (Cursor rules)
+- **/SKILL.md (agent skills)
+- hook configs, tool-hint files, sub-agent specs
+
+Each content field must be complete markdown project memory — overview, stack, key paths, user preferences, decisions, open questions.
+NOT enforceable rules with triggers. Limit to 4 files; prefer updating canonical files over inventing new paths.`,
 
     "agent-orchestration": `Design multi-agent orchestration for similar future work. Respond with JSON:
 {

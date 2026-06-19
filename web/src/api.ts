@@ -206,7 +206,15 @@ export type PromptImprovementResult = {
   createdAt: string;
 };
 
-export type LlmProviderKind = "anthropic" | "openai" | "ollama" | "nvidia";
+export type LlmProviderKind =
+  | "anthropic"
+  | "openai"
+  | "openrouter"
+  | "opencode-zen"
+  | "groq"
+  | "deepseek"
+  | "ollama"
+  | "nvidia";
 
 export type RecurringPattern = {
   id: string;

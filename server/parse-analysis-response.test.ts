@@ -100,4 +100,33 @@ describe("parseAnalysisResponse", () => {
       expect(result.structured.wasteItems.length).toBeGreaterThan(0);
     }
   });
+
+  test("memory-file-drafts excludes cursor rules paths", () => {
+    const raw = JSON.stringify({
+      summary: "Context to persist",
+      files: [
+        {
+          path: ".cursor/rules/agent-efficiency.mdc",
+          purpose: "wrong type",
+          action: "create",
+          rationale: "loops",
+          content: "# Rule body",
+        },
+        {
+          path: "AGENTS.md",
+          purpose: "project memory",
+          action: "create",
+          rationale: "ERP context",
+          content: "# Project\n\nERP modules overview.",
+        },
+      ],
+    });
+    const result = parseAnalysisResponse("memory-file-drafts", raw, "en");
+    expect(result.structured?.kind).toBe("memory-files");
+    if (result.structured?.kind === "memory-files") {
+      expect(result.structured.files).toHaveLength(1);
+      expect(result.structured.files[0]?.path).toBe("AGENTS.md");
+    }
+    expect(result.parseWarning).toContain("Excluded");
+  });
 });

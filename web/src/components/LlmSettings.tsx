@@ -22,6 +22,25 @@ type ProviderForm = {
   visionModel: string;
 };
 
+const ALL_PROVIDERS: LlmProviderKind[] = [
+  "anthropic",
+  "openai",
+  "openrouter",
+  "opencode-zen",
+  "groq",
+  "deepseek",
+  "ollama",
+  "nvidia",
+];
+
+const BASE_URL_PROVIDERS = new Set<LlmProviderKind>([
+  "openrouter",
+  "opencode-zen",
+  "groq",
+  "deepseek",
+  "ollama",
+]);
+
 function emptyProviderForm(): ProviderForm {
   return {
     apiKey: UNCHANGED_KEY_SENTINEL,
@@ -33,13 +52,15 @@ function emptyProviderForm(): ProviderForm {
   };
 }
 
+function createEmptyForms(): Record<LlmProviderKind, ProviderForm> {
+  return Object.fromEntries(ALL_PROVIDERS.map((id) => [id, emptyProviderForm()])) as Record<
+    LlmProviderKind,
+    ProviderForm
+  >;
+}
+
 function formsFromSettings(settings: LlmSettingsView): Record<LlmProviderKind, ProviderForm> {
-  const map = {
-    anthropic: emptyProviderForm(),
-    openai: emptyProviderForm(),
-    ollama: emptyProviderForm(),
-    nvidia: emptyProviderForm(),
-  };
+  const map = createEmptyForms();
   for (const p of settings.providers) {
     map[p.id] = {
       apiKey: UNCHANGED_KEY_SENTINEL,
@@ -53,17 +74,48 @@ function formsFromSettings(settings: LlmSettingsView): Record<LlmProviderKind, P
   return map;
 }
 
+function patchForProvider(id: LlmProviderKind, f: ProviderForm): Record<string, string> {
+  switch (id) {
+    case "anthropic":
+      return { anthropicApiKey: f.apiKey, anthropicModel: f.defaultModel };
+    case "openai":
+      return { openaiApiKey: f.apiKey, openaiModel: f.defaultModel };
+    case "openrouter":
+      return {
+        openrouterApiKey: f.apiKey,
+        openrouterBaseUrl: f.baseUrl,
+        openrouterModel: f.defaultModel,
+      };
+    case "opencode-zen":
+      return {
+        opencodeZenApiKey: f.apiKey,
+        opencodeZenBaseUrl: f.baseUrl,
+        opencodeZenModel: f.defaultModel,
+      };
+    case "groq":
+      return { groqApiKey: f.apiKey, groqBaseUrl: f.baseUrl, groqModel: f.defaultModel };
+    case "deepseek":
+      return { deepseekApiKey: f.apiKey, deepseekBaseUrl: f.baseUrl, deepseekModel: f.defaultModel };
+    case "ollama":
+      return { ollamaBaseUrl: f.baseUrl, ollamaModel: f.defaultModel };
+    case "nvidia":
+      return {
+        nvidiaApiKey: f.apiKey,
+        nvidiaApiUrl: f.apiUrl,
+        nvidiaTextModel: f.textModel || f.defaultModel,
+        nvidiaVisionModel: f.visionModel || f.textModel || f.defaultModel,
+      };
+    default:
+      return {};
+  }
+}
+
 export function LlmSettings({ onClose, onSaved }: Props) {
   const [settings, setSettings] = useState<LlmSettingsView | null>(null);
   const [defaultProvider, setDefaultProvider] = useState<LlmProviderKind>("anthropic");
   const [defaultModel, setDefaultModel] = useState("");
   const [activeTab, setActiveTab] = useState<LlmProviderKind>("anthropic");
-  const [forms, setForms] = useState<Record<LlmProviderKind, ProviderForm>>({
-    anthropic: emptyProviderForm(),
-    openai: emptyProviderForm(),
-    ollama: emptyProviderForm(),
-    nvidia: emptyProviderForm(),
-  });
+  const [forms, setForms] = useState<Record<LlmProviderKind, ProviderForm>>(createEmptyForms);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -91,30 +143,6 @@ export function LlmSettings({ onClose, onSaved }: Props) {
     load();
   }, [load]);
 
-  const patchFromForms = (): Record<string, string | LlmProviderKind> => {
-    const f = forms[activeTab];
-    const base: Record<string, string | LlmProviderKind> = {
-      defaultProvider,
-      defaultModel,
-    };
-    if (activeTab === "anthropic") {
-      base.anthropicApiKey = f.apiKey;
-      base.anthropicModel = f.defaultModel;
-    } else if (activeTab === "openai") {
-      base.openaiApiKey = f.apiKey;
-      base.openaiModel = f.defaultModel;
-    } else if (activeTab === "ollama") {
-      base.ollamaBaseUrl = f.baseUrl;
-      base.ollamaModel = f.defaultModel;
-    } else if (activeTab === "nvidia") {
-      base.nvidiaApiKey = f.apiKey;
-      base.nvidiaApiUrl = f.apiUrl;
-      base.nvidiaTextModel = f.textModel || f.defaultModel;
-      base.nvidiaVisionModel = f.visionModel || f.textModel || f.defaultModel;
-    }
-    return base;
-  };
-
   const testOverrides = () => {
     const f = forms[activeTab];
     return {
@@ -133,20 +161,14 @@ export function LlmSettings({ onClose, onSaved }: Props) {
     setSaveMsg(null);
     setError(null);
     try {
-      const res = await api.saveLlmSettings({
-        ...patchFromForms(),
-        // persist all provider models on save
-        anthropicApiKey: forms.anthropic.apiKey,
-        anthropicModel: forms.anthropic.defaultModel,
-        openaiApiKey: forms.openai.apiKey,
-        openaiModel: forms.openai.defaultModel,
-        ollamaBaseUrl: forms.ollama.baseUrl,
-        ollamaModel: forms.ollama.defaultModel,
-        nvidiaApiKey: forms.nvidia.apiKey,
-        nvidiaApiUrl: forms.nvidia.apiUrl,
-        nvidiaTextModel: forms.nvidia.textModel || forms.nvidia.defaultModel,
-        nvidiaVisionModel: forms.nvidia.visionModel || forms.nvidia.textModel || forms.nvidia.defaultModel,
-      });
+      const payload: Record<string, string | LlmProviderKind> = {
+        defaultProvider,
+        defaultModel,
+      };
+      for (const id of ALL_PROVIDERS) {
+        Object.assign(payload, patchForProvider(id, forms[id]));
+      }
+      const res = await api.saveLlmSettings(payload);
       setSettings(res.settings);
       setForms(formsFromSettings(res.settings));
       setSaveMsg("Saved — active immediately, no restart needed.");
@@ -182,6 +204,7 @@ export function LlmSettings({ onClose, onSaved }: Props) {
 
   const activeProvider = settings?.providers.find((p) => p.id === activeTab);
   const f = forms[activeTab];
+  const showBaseUrl = BASE_URL_PROVIDERS.has(activeTab);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -279,14 +302,24 @@ export function LlmSettings({ onClose, onSaved }: Props) {
                 </label>
               )}
 
-              {activeTab === "ollama" && (
+              {showBaseUrl && (
                 <label>
-                  Base URL
+                  {activeTab === "ollama" ? "Base URL" : "API base URL"}
                   <input
                     type="url"
                     value={f.baseUrl}
                     onChange={(e) => updateForm({ baseUrl: e.target.value })}
-                    placeholder="http://localhost:11434"
+                    placeholder={
+                      activeTab === "openrouter"
+                        ? "https://openrouter.ai/api/v1"
+                        : activeTab === "opencode-zen"
+                          ? "https://opencode.ai/zen/v1"
+                          : activeTab === "groq"
+                            ? "https://api.groq.com/openai/v1"
+                            : activeTab === "deepseek"
+                              ? "https://api.deepseek.com/v1"
+                              : "http://localhost:11434"
+                    }
                   />
                 </label>
               )}
@@ -307,7 +340,9 @@ export function LlmSettings({ onClose, onSaved }: Props) {
                     <input
                       type="text"
                       value={f.textModel || f.defaultModel}
-                      onChange={(e) => updateForm({ textModel: e.target.value, defaultModel: e.target.value })}
+                      onChange={(e) =>
+                        updateForm({ textModel: e.target.value, defaultModel: e.target.value })
+                      }
                     />
                   </label>
                   <label>
@@ -328,13 +363,22 @@ export function LlmSettings({ onClose, onSaved }: Props) {
                     type="text"
                     value={f.defaultModel}
                     onChange={(e) => updateForm({ defaultModel: e.target.value })}
+                    placeholder={
+                      activeTab === "openrouter"
+                        ? "e.g. anthropic/claude-3.5-sonnet"
+                        : activeTab === "opencode-zen"
+                          ? "e.g. deepseek-v4-flash-free"
+                          : undefined
+                    }
                   />
                 </label>
               )}
 
               {testResult && testResult.provider === activeTab && (
                 <div className={`llm-test-result${testResult.ok ? " ok" : " fail"}`}>
-                  <strong>{testResult.ok ? "✓" : "✗"} {testResult.message}</strong>
+                  <strong>
+                    {testResult.ok ? "✓" : "✗"} {testResult.message}
+                  </strong>
                   <div className="modal-hint">
                     {testResult.model} · {testResult.latencyMs}ms
                     {testResult.preview ? ` · "${testResult.preview}"` : ""}
