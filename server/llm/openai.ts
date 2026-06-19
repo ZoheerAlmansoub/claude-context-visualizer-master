@@ -1,5 +1,6 @@
 import type { LLMProvider, LlmRequest, LlmResponse } from "./provider.ts";
 import { getLlmConfig } from "../config.ts";
+import { llmFetch } from "./http.ts";
 
 export class OpenAIProvider implements LLMProvider {
   id = "openai";
@@ -8,7 +9,7 @@ export class OpenAIProvider implements LLMProvider {
     const key = getLlmConfig().openaiApiKey;
     if (!key) throw new Error("OPENAI_API_KEY not configured");
 
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await llmFetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "content-type": "application/json",

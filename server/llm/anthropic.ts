@@ -1,5 +1,6 @@
 import type { LLMProvider, LlmRequest, LlmResponse } from "./provider.ts";
 import { getLlmConfig } from "../config.ts";
+import { llmFetch } from "./http.ts";
 
 export class AnthropicProvider implements LLMProvider {
   id = "anthropic";
@@ -11,7 +12,7 @@ export class AnthropicProvider implements LLMProvider {
     const system = req.messages.find((m) => m.role === "system")?.content ?? "";
     const messages = req.messages.filter((m) => m.role !== "system");
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await llmFetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "content-type": "application/json",

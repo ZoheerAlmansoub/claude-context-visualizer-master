@@ -1117,6 +1117,58 @@ button { font-family: inherit; font-size: inherit; color: inherit; cursor: point
 }
 
 .analysis-loading { margin-top: 8px; }
+.analysis-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.analysis-active-card {
+  margin-top: 4px;
+  padding: 14px 16px;
+  border: 1px solid rgb(99 102 241 / 0.28);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgb(99 102 241 / 0.07), rgb(99 102 241 / 0.02));
+  box-shadow: 0 2px 12px rgb(99 102 241 / 0.08);
+}
+.analysis-active-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.analysis-active-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+.analysis-elapsed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgb(99 102 241 / 0.12);
+  border: 1px solid rgb(99 102 241 / 0.22);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5rem;
+  justify-content: center;
+}
+.analysis-elapsed-value {
+  min-width: 3ch;
+  text-align: center;
+}
+.analysis-active-meta {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
 .analysis-skeleton {
   padding: 16px;
   border: 1px dashed var(--border);
@@ -1336,6 +1388,107 @@ button { font-family: inherit; font-size: inherit; color: inherit; cursor: point
 .badge-skill { background: rgb(34 197 94 / 0.15); color: #16a34a; }
 .badge-rule { background: rgb(59 130 246 / 0.15); color: #2563eb; }
 .badge-tool-hint { background: rgb(168 85 247 / 0.15); color: #9333ea; }
+.badge-hook { background: rgb(236 72 153 / 0.15); color: #db2777; }
+.badge-subagent { background: rgb(14 165 233 / 0.15); color: #0284c7; }
+.analysis-type-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: -6px 0 10px;
+}
+.analysis-results { display: flex; flex-direction: column; gap: 12px; }
+.analysis-section h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+.analysis-markdown-body {
+  padding: 12px 14px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-sm);
+  max-height: 500px;
+  overflow: auto;
+}
+.analysis-artifact-card { margin-top: 0; }
+.analysis-save-path-input {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.analysis-waste-table-wrap { overflow-x: auto; }
+.analysis-waste-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.analysis-waste-table th,
+.analysis-waste-table td {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.analysis-waste-table th {
+  background: var(--bg-subtle);
+  font-weight: 600;
+}
+.impact-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.impact-high { background: rgb(239 68 68 / 0.15); color: #dc2626; }
+.impact-medium { background: rgb(234 179 8 / 0.15); color: #ca8a04; }
+.impact-low { background: rgb(34 197 94 / 0.15); color: #16a34a; }
+.analysis-parse-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #b45309;
+  background: rgb(234 179 8 / 0.1);
+  border: 1px solid rgb(234 179 8 / 0.25);
+  border-radius: 8px;
+}
+.analysis-source-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.analysis-source-heuristic {
+  color: #1d4ed8;
+  background: rgb(59 130 246 / 0.08);
+  border: 1px solid rgb(59 130 246 / 0.22);
+}
+.analysis-source-hybrid {
+  color: var(--text-dim);
+  background: rgb(148 163 184 / 0.08);
+  border: 1px solid rgb(148 163 184 / 0.2);
+}
+.analysis-heuristic-note,
+.analysis-action-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 4px 0 0;
+}
+.empty-panel.compact {
+  padding: 12px;
+  font-size: 12px;
+}
 .confidence { font-size: 11px; margin-left: auto; }
 .confidence-high { color: #16a34a; }
 .confidence-medium { color: #ca8a04; }

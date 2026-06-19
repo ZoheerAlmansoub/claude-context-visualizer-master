@@ -51,15 +51,85 @@ export type SessionTranscript = {
   warnings: string[];
 };
 
-export type AnalyzeType = "summarize" | "intent-map" | "experience-extract" | "session-review";
+export type AnalyzeType =
+  | "summarize"
+  | "intent-map"
+  | "experience-extract"
+  | "session-review"
+  | "token-audit"
+  | "loop-diagnosis"
+  | "tool-hardening"
+  | "artifact-blueprint"
+  | "memory-file-drafts"
+  | "agent-orchestration"
+  | "agentic-lessons";
+
+export type AnalysisCategory = "overview" | "context" | "loops" | "artifacts" | "learning";
+
+export type ArtifactKind = "skill" | "rule" | "tool-hint" | "hook" | "subagent";
 
 export type LlmProviderKind = "anthropic" | "openai" | "ollama" | "nvidia";
+
+export type TokenWasteItem = {
+  source: string;
+  description: string;
+  estimatedImpact: "low" | "medium" | "high";
+  recommendation: string;
+  turns?: number[];
+};
+
+export type MemoryFileDraft = {
+  path: string;
+  purpose: string;
+  action: "create" | "update" | "append";
+  rationale: string;
+  content: string;
+};
+
+export type SubAgentSpec = {
+  name: string;
+  role: string;
+  whenToUse: string;
+  contextBudget: string;
+  handoffPoints: string;
+  tools: string[];
+  confidence: "high" | "medium" | "low";
+};
+
+export type GeneratedArtifact = {
+  kind: ArtifactKind;
+  name: string;
+  description: string;
+  trigger: string;
+  content: string;
+  rendered?: string;
+  sourceTurns: number[];
+  confidence: "high" | "medium" | "low";
+};
+
+export type StructuredAnalysis =
+  | { kind: "token-audit"; wasteItems: TokenWasteItem[]; summary: string }
+  | { kind: "prevention-rules"; rules: GeneratedArtifact[]; summary: string }
+  | { kind: "artifacts"; items: GeneratedArtifact[]; summary: string }
+  | { kind: "memory-files"; files: MemoryFileDraft[]; summary: string }
+  | {
+      kind: "orchestration";
+      agents: SubAgentSpec[];
+      summary: string;
+      whenSwarm: string;
+    };
+
+export type AnalysisSource = "llm" | "heuristic" | "hybrid";
 
 export type AnalyzeResult = {
   analysisId: string;
   type: AnalyzeType;
   markdown: string;
-  structured?: unknown;
+  structured?: StructuredAnalysis;
+  analysisSource?: AnalysisSource;
+  /** Set when LLM could not run (e.g. gateway timeout) but heuristic data was returned */
+  llmUnavailable?: "timeout";
+  parseWarning?: string;
   tokensUsed?: number;
   cached: boolean;
   provider: LlmProviderKind;
@@ -96,17 +166,6 @@ export type PromptImprovementResult = {
   model: string;
   locale: "ar" | "en";
   createdAt: string;
-};
-
-export type GeneratedArtifact = {
-  kind: "skill" | "rule" | "tool-hint";
-  name: string;
-  description: string;
-  trigger: string;
-  content: string;
-  rendered: string;
-  sourceTurns: number[];
-  confidence: "high" | "medium" | "low";
 };
 
 export type RecurringPattern = {

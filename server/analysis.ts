@@ -7,16 +7,23 @@ import type {
   AnalyzeResult,
   AnalyzeType,
   LlmProviderKind,
+  RecurringPattern,
   SessionTranscript,
 } from "./types.ts";
 import { buildAnalysisPrompt } from "./llm/prompts.ts";
+import { buildHeuristicFallbackResult, parseAnalysisResponse } from "./llm/parse-analysis-response.ts";
+import {
+  buildAnalysisTranscriptContext,
+  contextLimitsFor,
+  formatAnalysisLlmError,
+  isGatewaySensitiveProvider,
+  isHeavySession,
+  isRetryableGatewayError,
+  supportsHeuristicFallback,
+} from "./analysis-budget.ts";
 import { getProvider, resolveModel } from "./llm/router.ts";
 import { getLlmConfig } from "./config.ts";
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max) + "\n\n… [truncated for LLM context limit]";
-}
+import type { LLMProvider } from "./llm/provider.ts";
 
 function analysisCacheDir(agent: string, sessionId: string): string {
   return join(CACHE_DIR, "analysis", agent, sessionId);
@@ -72,6 +79,107 @@ function latestForCombo(
   );
 }
 
+async function callAnalysisLlm(
+  llm: LLMProvider,
+  model: string,
+  type: AnalyzeType,
+  transcript: SessionTranscript,
+  locale: "ar" | "en",
+  opts: { compact: boolean; ultraCompact: boolean; gatewaySensitive: boolean },
+) {
+  const limits = contextLimitsFor(type, {
+    compact: opts.compact,
+    ultraCompact: opts.ultraCompact,
+    gatewaySensitive: opts.gatewaySensitive,
+  });
+  const ctx = buildAnalysisTranscriptContext(transcript, type, limits);
+  const { system, user } = buildAnalysisPrompt(type, ctx, locale);
+
+  const response = await llm.complete({
+    model,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    maxTokens: limits.maxTokens,
+  });
+
+  return {
+    response,
+    patterns: ctx.patterns,
+  };
+}
+
+type AnalysisAttemptTier = { compact: boolean; ultraCompact: boolean };
+
+function analysisAttemptTiers(
+  transcript: SessionTranscript,
+  gatewaySensitive: boolean,
+): AnalysisAttemptTier[] {
+  const heavy = gatewaySensitive && isHeavySession(transcript);
+  if (heavy) {
+    return [
+      { compact: true, ultraCompact: false },
+      { compact: true, ultraCompact: true },
+    ];
+  }
+  return [
+    { compact: false, ultraCompact: false },
+    { compact: true, ultraCompact: false },
+    { compact: true, ultraCompact: true },
+  ];
+}
+
+async function runAnalysisLlmWithRetries(
+  llm: LLMProvider,
+  model: string,
+  type: AnalyzeType,
+  transcript: SessionTranscript,
+  locale: "ar" | "en",
+  gatewaySensitive: boolean,
+): Promise<
+  | { mode: "llm"; patterns: RecurringPattern[]; responseText: string; tokensUsed?: number }
+  | { mode: "heuristic"; patterns: RecurringPattern[]; parsed: ReturnType<typeof buildHeuristicFallbackResult> }
+> {
+  const tiers = analysisAttemptTiers(transcript, gatewaySensitive);
+  let lastErr: unknown;
+
+  for (const tier of tiers) {
+    try {
+      const result = await callAnalysisLlm(llm, model, type, transcript, locale, {
+        ...tier,
+        gatewaySensitive,
+      });
+      return {
+        mode: "llm",
+        patterns: result.patterns,
+        responseText: result.response.text,
+        tokensUsed: result.response.tokensUsed,
+      };
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryableGatewayError(err)) {
+        throw new Error(formatAnalysisLlmError(err, locale));
+      }
+    }
+  }
+
+  if (supportsHeuristicFallback(type)) {
+    const limits = contextLimitsFor(type, {
+      compact: true,
+      ultraCompact: true,
+      gatewaySensitive,
+    });
+    const ctx = buildAnalysisTranscriptContext(transcript, type, limits);
+    const parsed = buildHeuristicFallbackResult(type, ctx.patterns, locale);
+    if (parsed) {
+      return { mode: "heuristic", patterns: ctx.patterns, parsed };
+    }
+  }
+
+  throw new Error(formatAnalysisLlmError(lastErr, locale));
+}
+
 export async function runAnalysis(
   transcript: SessionTranscript,
   opts: {
@@ -94,45 +202,45 @@ export async function runAnalysis(
     if (existing) return { ...existing, cached: true };
   }
 
-  const toolSummary = transcript.toolEvents
-    .slice(0, 100)
-    .map(
-      (t) =>
-        `Turn ${t.turn}: ${t.toolName}${t.isError ? " (ERROR)" : ""} — ${t.resultText.slice(0, 200)}`,
-    )
-    .join("\n");
+  const llm = getProvider(provider);
+  const gatewaySensitive = isGatewaySensitiveProvider(provider);
 
-  const conversationText = transcript.conversation
-    .map((m) => `[${m.role} turn ${m.turn}] ${m.text.slice(0, 2000)}`)
-    .join("\n\n");
-
-  const { system, user } = buildAnalysisPrompt(
+  const llmResult = await runAnalysisLlmWithRetries(
+    llm,
+    model,
     opts.type,
-    {
-      userMessages: truncate(transcript.userMessages.aggregatedText, 24_000),
-      conversation: truncate(conversationText, 24_000),
-      toolSummary: truncate(toolSummary, 8_000),
-    },
+    transcript,
     locale,
+    gatewaySensitive,
   );
 
-  const llm = getProvider(provider);
-  const response = await llm.complete({
-    model,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    maxTokens: 2048,
-  });
+  let patterns: RecurringPattern[] = llmResult.patterns;
+  let responseText = "";
+  let tokensUsed: number | undefined;
+  let parsed: ReturnType<typeof parseAnalysisResponse>;
+  let llmUnavailable: "timeout" | undefined;
+
+  if (llmResult.mode === "heuristic") {
+    parsed = llmResult.parsed!;
+    responseText = parsed.markdown;
+    llmUnavailable = "timeout";
+  } else {
+    responseText = llmResult.responseText;
+    tokensUsed = llmResult.tokensUsed;
+    parsed = parseAnalysisResponse(opts.type, responseText, locale, patterns);
+  }
 
   const createdAt = new Date().toISOString();
   const analysisId = runAnalysisId(combo, createdAt, force);
   const result: AnalyzeResult = {
     analysisId,
     type: opts.type,
-    markdown: response.text,
-    tokensUsed: response.tokensUsed,
+    markdown: parsed.markdown || responseText.trim(),
+    structured: parsed.structured,
+    analysisSource: parsed.analysisSource,
+    llmUnavailable,
+    parseWarning: parsed.parseWarning,
+    tokensUsed,
     cached: false,
     provider,
     model,

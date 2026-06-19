@@ -1,12 +1,13 @@
 import type { LLMProvider, LlmRequest, LlmResponse } from "./provider.ts";
 import { getLlmConfig } from "../config.ts";
+import { llmFetch } from "./http.ts";
 
 export class OllamaProvider implements LLMProvider {
   id = "ollama";
 
   async complete(req: LlmRequest): Promise<LlmResponse> {
     const base = getLlmConfig().ollamaBaseUrl.replace(/\/$/, "");
-    const res = await fetch(`${base}/api/chat`, {
+    const res = await llmFetch(`${base}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
