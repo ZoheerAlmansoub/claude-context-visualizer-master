@@ -130,6 +130,31 @@ function normalizeMemoryFile(raw: Record<string, unknown>): MemoryFileDraft {
   };
 }
 
+/** Cursor rules/skills belong in artifact-blueprint — not memory-file-drafts */
+export function isDisallowedMemoryPath(path: string): boolean {
+  const p = path.replace(/\\/g, "/").trim();
+  return (
+    /\.cursor\/rules\//i.test(p) ||
+    /\.mdc$/i.test(p) ||
+    /\/SKILL\.md$/i.test(p) ||
+    /(^|\/)SKILL\.md$/i.test(p)
+  );
+}
+
+function filterMemoryFiles(
+  files: MemoryFileDraft[],
+  locale: "ar" | "en",
+): { files: MemoryFileDraft[]; excluded: number } {
+  const kept = files.filter((f) => f.content && !isDisallowedMemoryPath(f.path));
+  return { files: kept, excluded: files.length - kept.length };
+}
+
+function memoryFilesExcludedWarning(excluded: number, locale: "ar" | "en"): string {
+  return locale === "ar"
+    ? `تم استبعاد ${excluded} ملفاً (قواعد .mdc أو skills) — هذا التحليل لملفات الذاكرة فقط. استخدم Artifact blueprint للقواعد.`
+    : `Excluded ${excluded} item(s) (rules .mdc or skills) — this analysis is for memory files only. Use Artifact blueprint for rules.`;
+}
+
 function normalizeSubAgent(raw: Record<string, unknown>): SubAgentSpec {
   return {
     name: String(raw.name ?? "sub-agent").trim(),
@@ -512,11 +537,15 @@ export function parseAnalysisResponse(
         break;
       }
       case "memory-file-drafts": {
-        const files = Array.isArray(parsed.files)
+        const rawFiles = Array.isArray(parsed.files)
           ? parsed.files
               .map((f) => normalizeMemoryFile(f as Record<string, unknown>))
               .filter((f) => f.content)
           : [];
+        const { files, excluded } = filterMemoryFiles(rawFiles, locale);
+        if (excluded > 0) {
+          parseWarning = memoryFilesExcludedWarning(excluded, locale);
+        }
         structured = {
           kind: "memory-files",
           summary: String(parsed.summary ?? "").trim(),

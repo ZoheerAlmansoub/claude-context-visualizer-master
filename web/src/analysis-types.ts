@@ -24,7 +24,7 @@ export const FALLBACK_ANALYSIS_TYPES: LlmConfig["analysisTypes"] = [
   { id: "loop-diagnosis", label: "Loop diagnosis", description: "Root cause of retry loops and prevention rules", category: "loops" },
   { id: "tool-hardening", label: "Tool hardening", description: "Per-tool error patterns and pre-check rules", category: "loops" },
   { id: "artifact-blueprint", label: "Artifact blueprint", description: "Skills, rules, hooks, and sub-agent specs", category: "artifacts" },
-  { id: "memory-file-drafts", label: "Memory file drafts", description: "Drafts for AGENTS.md, agent.md, claude.md, design.md", category: "artifacts" },
+  { id: "memory-file-drafts", label: "Memory file drafts", description: "Persistent context: AGENTS.md, CLAUDE.md, design.md (not rules)", category: "artifacts" },
   { id: "agent-orchestration", label: "Agent orchestration", description: "Sub-agents, swarms, and delegation design", category: "artifacts" },
   { id: "agentic-lessons", label: "Agentic lessons", description: "Principles and patterns for agentic engineering", category: "learning" },
 ];

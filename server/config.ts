@@ -87,7 +87,7 @@ export const ANALYSIS_TYPES: Array<{
   {
     id: "memory-file-drafts",
     label: "Memory file drafts",
-    description: "Drafts for AGENTS.md, agent.md, claude.md, design.md",
+    description: "Persistent context files: AGENTS.md, CLAUDE.md, design.md (not .cursor/rules)",
     category: "artifacts",
   },
   {

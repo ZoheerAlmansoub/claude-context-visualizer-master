@@ -1,5 +1,9 @@
 import type { LlmProviderKind } from "../types.ts";
-import { credentialsForTest, type LlmTestOverrides } from "../llm-config-store.ts";
+import {
+  credentialsForTest,
+  isOpenAiCompatibleProvider,
+  type LlmTestOverrides,
+} from "../llm-config-store.ts";
 
 export type LlmTestResult = {
   ok: boolean;
@@ -22,6 +26,29 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function testOpenAiChatCompletions(
+  url: string,
+  headers: Record<string, string>,
+  model: string,
+): Promise<string> {
+  const res = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...headers,
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 16,
+      messages: [{ role: "user", content: TEST_PROMPT }],
+      stream: false,
+    }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  return data.choices?.[0]?.message?.content?.trim() ?? "";
 }
 
 export async function testLlmConnection(
@@ -55,42 +82,36 @@ export async function testLlmConnection(
 
     if (provider === "openai") {
       if (!creds.apiKey) throw new Error("API key is required");
-      const res = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${creds.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: creds.model,
-          max_tokens: 16,
-          messages: [{ role: "user", content: TEST_PROMPT }],
-        }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      const preview = data.choices?.[0]?.message?.content?.trim() ?? "";
+      const preview = await testOpenAiChatCompletions(
+        "https://api.openai.com/v1/chat/completions",
+        { authorization: `Bearer ${creds.apiKey}` },
+        creds.model,
+      );
+      return okResult(provider, creds.model, started, preview);
+    }
+
+    if (isOpenAiCompatibleProvider(provider)) {
+      if (!creds.apiKey) throw new Error("API key is required");
+      const headers: Record<string, string> = { authorization: `Bearer ${creds.apiKey}` };
+      if (provider === "openrouter") {
+        headers["HTTP-Referer"] = "http://localhost:5173";
+        headers["X-Title"] = "Claude Context Visualizer";
+      }
+      const preview = await testOpenAiChatCompletions(
+        `${creds.baseUrl}/chat/completions`,
+        headers,
+        creds.model,
+      );
       return okResult(provider, creds.model, started, preview);
     }
 
     if (provider === "nvidia") {
       if (!creds.apiKey) throw new Error("API key is required");
-      const res = await fetchWithTimeout(`${creds.apiUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${creds.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: creds.model,
-          max_tokens: 16,
-          messages: [{ role: "user", content: TEST_PROMPT }],
-          stream: false,
-        }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      const preview = data.choices?.[0]?.message?.content?.trim() ?? "";
+      const preview = await testOpenAiChatCompletions(
+        `${creds.apiUrl}/chat/completions`,
+        { authorization: `Bearer ${creds.apiKey}` },
+        creds.model,
+      );
       return okResult(provider, creds.model, started, preview);
     }
 
