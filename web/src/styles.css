@@ -2216,6 +2216,19 @@ button { font-family: inherit; font-size: inherit; color: inherit; cursor: point
 }
 
 /* ─────────── Governance controls ─────────── */
+.governance-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.governance-workspace .governance-controls-card {
+  order: 1;
+}
+.governance-workspace .pipeline-workflow-card {
+  order: 2;
+  margin-top: 0;
+}
 .governance-controls-card {
   padding: 18px 20px;
 }
