@@ -59,9 +59,31 @@ function sessionMetaBlock(ctx: AnalysisTranscriptContext): string {
   return lines.join("\n");
 }
 
-function structuredSystemPrompt(type: AnalyzeType, lang: string): string {
+function agentRulePathExample(agent: AgentKind): string {
+  switch (agent) {
+    case "cursor":
+      return ".cursor/rules/<name>.mdc";
+    case "claude":
+      return ".claude/rules/<name>.md";
+    case "pi":
+      return ".pi/rules/<name>.md";
+    case "opencode":
+      return ".opencode/rules/<name>.md";
+    default:
+      return "docs/rules/<name>.md";
+  }
+}
+
+function memoryForbiddenArtifacts(agent: AgentKind): string {
+  const hints = agentArtifactPathHints(agent);
+  return `FORBIDDEN in this analysis (use artifact-blueprint or loop-diagnosis instead):
+- Agent rules, skills (SKILL.md), hooks, tool-hints, and sub-agent specs
+- Allowed artifact paths for ${agent} (do NOT use here):
+${hints.split("\n").map((l) => `  ${l}`).join("\n")}`;
+}
+
+function structuredSystemPrompt(type: AnalyzeType, lang: string, agent: AgentKind): string {
   if (type === "artifact-blueprint") {
-    const agent = transcript.agentKind ?? "cursor";
     return `You are an expert at designing agent artifacts (skills, rules, hooks, sub-agents) for ${agent}.
 Respond ONLY with valid JSON (no markdown fences). Use ${lang} for all string values.
 
@@ -77,10 +99,10 @@ Critical rules:
   }
 
   if (type === "memory-file-drafts") {
-    return `You are an expert at drafting persistent PROJECT MEMORY files for AI coding agents.
+    return `You are an expert at drafting persistent PROJECT MEMORY files for AI coding agents (${agent}).
 Respond ONLY with valid JSON (no markdown fences). Use ${lang} for all string values.
 
-This task is ONLY for memory/context documentation — NOT agent rules (.mdc), skills (SKILL.md), hooks, or tool-hints.
+This task is ONLY for memory/context documentation — NOT agent rules, skills (SKILL.md), hooks, or tool-hints.
 When existing project memory files are provided below, prefer action "update" or "append" with content that merges new session knowledge.
 Do NOT repeat content already present on disk unless refining it.
 
@@ -91,7 +113,7 @@ Critical rules:
 - Prefer canonical repo memory paths over many new files.`;
   }
 
-  return `You are an expert AI agent session analyst specializing in context optimization, loop prevention, and agent artifact design.
+  return `You are an expert AI agent session analyst specializing in context optimization, loop prevention, and agent artifact design for ${agent}.
 Respond ONLY with valid JSON (no markdown fences). Use ${lang} for all string values.
 
 Critical rules:
@@ -102,65 +124,9 @@ Critical rules:
 - Prefer high-confidence recommendations backed by multiple occurrences.`;
 }
 
-export function buildAnalysisPrompt(
-  type: AnalyzeType,
-  transcript: AnalysisTranscriptContext,
-  locale: "ar" | "en" = "en",
-): { system: string; user: string } {
-  const lang = locale === "ar" ? "Arabic" : "English";
-  const structured = isStructuredAnalysisType(type);
-
-  const system = structured ? structuredSystemPrompt(type, lang) : `You are an expert AI agent session analyst. Respond in ${lang} using clear markdown. Be concise and actionable. Ground claims in session evidence.`;
-
-  const context = [
-    sessionMetaBlock(transcript),
-    transcript.projectContext,
-    transcript.crossSessionPatterns,
-    transcript.tokenStats,
-    transcript.loopEvidence,
-    "## User messages",
-    transcript.userMessages,
-    "## Conversation (user + assistant)",
-    transcript.conversation,
-    "## Tool events summary",
-    transcript.toolSummary,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-
-  const markdownPrompts: Partial<Record<AnalyzeType, string>> = {
-    summarize: `Summarize this agent session:
-- User goals and constraints
-- Key decisions made
-- Final outcome / status
-- Top 3 actionable takeaways`,
-
-    "intent-map": `Build an intent map for this session:
-- List each distinct user intent (numbered)
-- First principles behind each intent
-- Dependencies between intents
-- Unresolved intents`,
-
-    "experience-extract": `Extract experiential knowledge from USER messages only:
-- Recurring preferences (how the user likes work done)
-- Domain expertise signals
-- Anti-patterns (what frustrated the user)
-- Suggested persistent rules for future agents`,
-
-    "session-review": `Review this agent session critically:
-- What the agent did well
-- Failures, loops, wasted tool calls
-- Token/context waste sources
-- Concrete recommendations to improve future sessions`,
-
-    "agentic-lessons": `Write an educational agentic engineering report from this session:
-- 3–5 principles extracted (orchestration, state, failure recovery)
-- Anti-patterns observed and a better pattern for each
-- What to practice next for building agent systems and automation
-- Recommended reading or practices (no invented citations)`,
-  };
-
-  const jsonPrompts: Partial<Record<AnalyzeType, string>> = {
+function buildJsonPrompts(agent: AgentKind): Partial<Record<AnalyzeType, string>> {
+  const rulePath = agentRulePathExample(agent);
+  return {
     "token-audit": `Audit token/context waste in this session. Respond with JSON:
 {
   "summary": "2-4 sentence overview",
@@ -186,14 +152,14 @@ Use token statistics and heuristic patterns as quantitative anchors. Include at 
       "name": "short-name",
       "description": "what this prevents",
       "trigger": "when to apply",
-      "content": "full rule text for .mdc file",
+      "content": "full rule text",
       "sourceTurns": [1],
       "confidence": "high|medium|low"
     }
   ]
 }
 For each loop: trigger → attempts → failure mode → root cause → stop condition.
-Include at least one preventionRule per detected loop/error pattern. Rules must be copy-paste ready for .cursor/rules/*.mdc.`,
+Include at least one preventionRule per detected loop/error pattern. Rules must be copy-paste ready for ${rulePath}.`,
 
     "tool-hardening": `Harden tools against repeated failures. Respond with JSON:
 {
@@ -210,10 +176,10 @@ Include at least one preventionRule per detected loop/error pattern. Rules must 
     }
   ]
 }
-One entry per tool with repeated errors. Include rules entries where a persistent .mdc rule is better.
+One entry per tool with repeated errors. Include rules entries where a persistent rule at ${rulePath} is better.
 Address every tool with 2+ errors in the session.`,
 
-    "artifact-blueprint": `Propose Cursor agent artifacts from this session. Respond with JSON:
+    "artifact-blueprint": `Propose ${agent} agent artifacts from this session. Respond with JSON:
 {
   "summary": "overview",
   "artifacts": [
@@ -228,6 +194,8 @@ Address every tool with 2+ errors in the session.`,
     }
   ]
 }
+Use paths appropriate for ${agent}:
+${agentArtifactPathHints(agent)}
 Prioritize high-confidence items that prevent repeated mistakes or encode user preferences.
 Limit to 8 artifacts max; quality over quantity.`,
 
@@ -246,15 +214,12 @@ Limit to 8 artifacts max; quality over quantity.`,
 }
 
 ALLOWED paths (memory/context only):
-- AGENTS.md or .cursor/AGENTS.md — repo-wide agent instructions & project overview
-- CLAUDE.md or claude.md — Cursor/Claude session context & coding conventions
+- AGENTS.md — repo-wide agent instructions & project overview
+- CLAUDE.md — Claude session context & coding conventions (when applicable)
 - design.md or docs/design.md — architecture & design decisions
 - docs/context/*.md — domain glossary, modules, business rules learned in session
 
-FORBIDDEN in this analysis (use artifact-blueprint or loop-diagnosis instead):
-- .cursor/rules/*.mdc (Cursor rules)
-- **/SKILL.md (agent skills)
-- hook configs, tool-hint files, sub-agent specs
+${memoryForbiddenArtifacts(agent)}
 
 Each content field must be complete markdown project memory — overview, stack, key paths, user preferences, decisions, open questions.
 NOT enforceable rules with triggers. Limit to 4 files; prefer updating canonical files over inventing new paths.`,
@@ -363,7 +328,7 @@ Use existing project context section. Prefer append/update over replace when pos
   "items": [
     {
       "name": "rule-name",
-      "proposedPath": ".cursor/rules/name.mdc",
+      "proposedPath": "${rulePath}",
       "existingPath": "optional existing path",
       "action": "create|merge|replace|skip",
       "rationale": "why",
@@ -435,7 +400,70 @@ Prioritize tools with errors, redundant calls, or schema misuse. Include non-MCP
 }
 Use cross-session patterns, project context on disk, and transcript evidence. Focus on durable knowledge, not session noise.`,
   };
+}
 
+export function buildAnalysisPrompt(
+  type: AnalyzeType,
+  transcript: AnalysisTranscriptContext,
+  locale: "ar" | "en" = "en",
+): { system: string; user: string } {
+  const lang = locale === "ar" ? "Arabic" : "English";
+  const agent = transcript.agentKind ?? "cursor";
+  const structured = isStructuredAnalysisType(type);
+
+  const system = structured
+    ? structuredSystemPrompt(type, lang, agent)
+    : `You are an expert AI agent session analyst. Respond in ${lang} using clear markdown. Be concise and actionable. Ground claims in session evidence.`;
+
+  const context = [
+    sessionMetaBlock(transcript),
+    transcript.projectContext,
+    transcript.crossSessionPatterns,
+    transcript.tokenStats,
+    transcript.loopEvidence,
+    "## User messages",
+    transcript.userMessages,
+    "## Conversation (user + assistant)",
+    transcript.conversation,
+    "## Tool events summary",
+    transcript.toolSummary,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const markdownPrompts: Partial<Record<AnalyzeType, string>> = {
+    summarize: `Summarize this agent session:
+- User goals and constraints
+- Key decisions made
+- Final outcome / status
+- Top 3 actionable takeaways`,
+
+    "intent-map": `Build an intent map for this session:
+- List each distinct user intent (numbered)
+- First principles behind each intent
+- Dependencies between intents
+- Unresolved intents`,
+
+    "experience-extract": `Extract experiential knowledge from USER messages only:
+- Recurring preferences (how the user likes work done)
+- Domain expertise signals
+- Anti-patterns (what frustrated the user)
+- Suggested persistent rules for future agents`,
+
+    "session-review": `Review this agent session critically:
+- What the agent did well
+- Failures, loops, wasted tool calls
+- Token/context waste sources
+- Concrete recommendations to improve future sessions`,
+
+    "agentic-lessons": `Write an educational agentic engineering report from this session:
+- 3–5 principles extracted (orchestration, state, failure recovery)
+- Anti-patterns observed and a better pattern for each
+- What to practice next for building agent systems and automation
+- Recommended reading or practices (no invented citations)`,
+  };
+
+  const jsonPrompts = buildJsonPrompts(agent);
   const instruction = structured ? jsonPrompts[type]! : markdownPrompts[type]!;
 
   return {
@@ -447,10 +475,11 @@ Use cross-session patterns, project context on disk, and transcript evidence. Fo
 export function buildArtifactPrompt(
   transcript: { userMessages: string; patterns: string },
   locale: "ar" | "en" = "en",
+  agent: AgentKind = "cursor",
 ): { system: string; user: string } {
   const lang = locale === "ar" ? "Arabic" : "English";
   return {
-    system: `You generate Cursor agent skills and rules from session analysis. Respond ONLY with valid JSON array. Each item: { "kind": "skill"|"rule"|"tool-hint", "name": string, "description": string, "trigger": string, "content": string, "sourceTurns": number[], "confidence": "high"|"medium"|"low" }. Use ${lang} for description/trigger/content.`,
+    system: `You generate ${agent} agent skills and rules from session analysis. Respond ONLY with valid JSON array. Each item: { "kind": "skill"|"rule"|"tool-hint", "name": string, "description": string, "trigger": string, "content": string, "sourceTurns": number[], "confidence": "high"|"medium"|"low" }. Use paths for ${agent}: ${agentArtifactPathHints(agent)}. Use ${lang} for description/trigger/content.`,
     user: `Based on these user messages and detected patterns, suggest skills, rules, and tool hints:\n\n${transcript.userMessages.slice(0, 60_000)}\n\nPatterns:\n${transcript.patterns}`,
   };
 }

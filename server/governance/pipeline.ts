@@ -16,6 +16,7 @@ import type {
   LlmProviderKind,
 } from "../types.ts";
 import { generateProjectPlaybook } from "./playbook.ts";
+import { buildGovernanceSummaryMarkdown, listGovernancePipelines } from "./history.ts";
 import { PROJECT_PIPELINES, SESSION_PIPELINES } from "./step-lists.ts";
 import { recordGovernanceRun } from "./schedule.ts";
 import {
@@ -148,6 +149,11 @@ async function executePipelineSteps(
     patterns: ctx.patterns,
     steps: payload.steps,
   });
+  payload.summaryMarkdown = await buildGovernanceSummaryMarkdown(
+    ctx.agent,
+    ctx.analysisSessionId,
+    payload.steps,
+  );
   payload.status = payload.steps.some((s) => s.status === "error") ? "error" : "complete";
 
   if (payload.autoApply && projectContext.verified && projectContext.projectRoot) {
@@ -199,6 +205,7 @@ function initPipelinePayload(opts: {
     mode: opts.mode,
     status: "running",
     cancelled: false,
+    createdAt: new Date().toISOString(),
     steps: opts.steps.map((type) => ({ type, status: "pending" as const })),
     agent: opts.agent,
     sessionId: opts.sessionId,
@@ -308,6 +315,7 @@ export async function runProjectGovernancePipeline(opts: {
     mode,
     steps,
     agent: opts.agent,
+    sessionId: latest.id,
     projectSlug: opts.projectSlug,
     provider: opts.provider,
     model: opts.model,
@@ -351,6 +359,8 @@ export async function getGovernancePipeline(pipelineId: string): Promise<Governa
     return null;
   }
 }
+
+export { listGovernancePipelines };
 
 export async function cancelGovernancePipeline(pipelineId: string): Promise<GovernancePipelineResult | null> {
   const payload = await getGovernancePipeline(pipelineId);

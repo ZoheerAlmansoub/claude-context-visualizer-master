@@ -28,7 +28,7 @@ export function App() {
       />
       <main className="main">
         {selected ? (
-          <Detail agent={agent} session={selected} />
+          <Detail agent={agent} session={selected} onSelectSession={setSelected} />
         ) : (
           <div className="empty">
             <h2>Agent Session Intelligence</h2>

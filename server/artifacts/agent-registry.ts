@@ -24,14 +24,14 @@ export function defaultArtifactTarget(
   const s = slug(artifact.name);
   switch (artifact.kind) {
     case "skill":
-      if (agent === "cursor") return { relativePath: join(".cursor", "skills", s, "SKILL.md"), scope: "user" };
+      if (agent === "cursor") return { relativePath: `~/.cursor/skills/${s}/SKILL.md`, scope: "user" };
       if (agent === "claude") return { relativePath: join(".claude", "skills", s, "SKILL.md"), scope: "project" };
       if (agent === "pi") return { relativePath: join(".pi", "skills", s, "SKILL.md"), scope: "project" };
       return { relativePath: join(".opencode", "skills", s, "SKILL.md"), scope: "project" };
     case "rule":
       if (agent === "cursor") return { relativePath: join(".cursor", "rules", `${s}.mdc`), scope: "project" };
       if (agent === "claude") return { relativePath: join(".claude", "rules", `${s}.md`), scope: "project" };
-      if (agent === "pi") return { relativePath: join("AGENTS.md"), scope: "project" };
+      if (agent === "pi") return { relativePath: join(".pi", "rules", `${s}.md`), scope: "project" };
       return { relativePath: join(".opencode", "rules", `${s}.md`), scope: "project" };
     case "hook":
       if (agent === "cursor") return { relativePath: join(".cursor", "hooks", `${s}.md`), scope: "project" };
@@ -50,8 +50,9 @@ export function resolveArtifactAbsolutePath(
   target: ArtifactTarget,
   projectRoot: string,
 ): string {
-  if (target.scope === "user" && agent === "cursor") {
-    return join(homedir(), ".cursor", "skills", slug(target.relativePath.split("/").slice(-2)[0] ?? "skill"), "SKILL.md");
+  const rel = target.relativePath.replace(/\\/g, "/");
+  if (target.scope === "user" && rel.startsWith("~/")) {
+    return join(homedir(), rel.slice(2));
   }
   return join(projectRoot, target.relativePath);
 }

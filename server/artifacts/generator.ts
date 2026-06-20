@@ -105,6 +105,7 @@ export async function generateArtifacts(
     const { system, user } = buildArtifactPrompt(
       { userMessages: transcript.userMessages.aggregatedText, patterns },
       opts.locale ?? "en",
+      agent,
     );
     const provider = opts.provider ?? "anthropic";
     const model = resolveModel(provider, opts.model);

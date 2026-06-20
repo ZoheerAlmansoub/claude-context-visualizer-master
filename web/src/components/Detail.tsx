@@ -9,8 +9,9 @@ import { ArtifactsPanel } from "./ArtifactsPanel";
 import { InsightsPanel } from "./InsightsPanel";
 import { GovernancePanel } from "./GovernancePanel";
 import { ProjectDashboard } from "./ProjectDashboard";
+import { GovernancePipelineProvider } from "../context/GovernancePipelineContext";
 
-type Props = { agent: AgentKind; session: SessionListItem };
+type Props = { agent: AgentKind; session: SessionListItem; onSelectSession?: (session: SessionListItem) => void };
 
 // Cap on how many item rows are rendered at once (the list can be huge).
 const MAX_ROWS = 500;
@@ -47,7 +48,7 @@ function gatherOffenders(snap: Snapshot): OffenderRow[] {
   return rows;
 }
 
-export function Detail({ agent, session }: Props) {
+export function Detail({ agent, session, onSelectSession }: Props) {
   const [tab, setTab] = useState<DetailTab>("context");
   const [projectVerified, setProjectVerified] = useState<boolean | null>(null);
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -101,12 +102,24 @@ export function Detail({ agent, session }: Props) {
     );
   }, [filteredItems, sortBy]);
 
+  const navigateSession = async (id: string) => {
+    if (id === session.id) return;
+    try {
+      const sessions = await api.sessions(agent, session.project);
+      const found = sessions.find((s) => s.id === id);
+      if (found) onSelectSession?.(found);
+    } catch (e) {
+      alert(String(e));
+    }
+  };
+
   if (loading || !snap) return <div className="loading">Computing snapshot…</div>;
 
   const pct = snap.headline.modelCap > 0 ? snap.headline.realTotal / snap.headline.modelCap : 0;
   const total = snap.buckets.reduce((s, b) => s + b.tokens, 0);
 
   return (
+    <GovernancePipelineProvider>
     <>
       <div className="session-header">
         <h1 className="session-title">{session.title}</h1>
@@ -190,7 +203,9 @@ export function Detail({ agent, session }: Props) {
         <ArtifactsPanel agent={agent} sessionId={session.id} projectPath={session.projectPath} />
       )}
       {tab === "insights" && <InsightsPanel agent={agent} session={session} />}
-      {tab === "dashboard" && <ProjectDashboard agent={agent} session={session} />}
+      {tab === "dashboard" && (
+        <ProjectDashboard agent={agent} session={session} onSelectSession={navigateSession} />
+      )}
       {tab === "governance" && <GovernancePanel agent={agent} session={session} />}
 
       {tab === "context" && (
@@ -321,6 +336,7 @@ export function Detail({ agent, session }: Props) {
         </>
       )}
     </>
+    </GovernancePipelineProvider>
   );
 }
 

@@ -5,7 +5,16 @@ import type {
   MemoryFileDraft,
   RuleDedupItem,
   StructuredAnalysis,
+  SubAgentSpec,
 } from "../api";
+import {
+  artifactApplyPath,
+  disambiguateApplyPaths,
+  memoryApplyPath,
+  recoveryApplyPath,
+  resolveArtifactApplyPath,
+  ruleDedupApplyPath,
+} from "./artifact-paths";
 
 export type ApplyPackItem = {
   id: string;
@@ -18,35 +27,36 @@ export type ApplyPackItem = {
   diffPreview?: string;
 };
 
-function defaultArtifactPath(artifact: GeneratedArtifact, agent: AgentKind = "cursor"): string {
-  const slug = artifact.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  switch (artifact.kind) {
-    case "skill":
-      if (agent === "claude") return `.claude/skills/${slug}/SKILL.md`;
-      if (agent === "pi") return `.pi/skills/${slug}/SKILL.md`;
-      if (agent === "opencode") return `.opencode/skills/${slug}/SKILL.md`;
-      return `~/.cursor/skills/${slug}/SKILL.md`;
-    case "rule":
-      if (agent === "claude") return `.claude/rules/${slug}.md`;
-      if (agent === "opencode") return `.opencode/rules/${slug}.md`;
-      if (agent === "pi") return `AGENTS.md`;
-      return `.cursor/rules/${slug}.mdc`;
-    case "hook":
-      if (agent === "claude") return `.claude/hooks/${slug}.md`;
-      return `.cursor/hooks/${slug}.md`;
-    case "subagent":
-      if (agent === "cursor") return `.cursor/agents/${slug}.md`;
-      return `docs/agents/${slug}.md`;
-    default:
-      return "";
-  }
-}
-
 function mapRuleAction(action: RuleDedupItem["action"]): ApplyPackItem["action"] | null {
   if (action === "skip") return null;
   if (action === "merge") return "append";
   if (action === "replace") return "update";
   return "create";
+}
+
+function subAgentSpecToArtifact(spec: SubAgentSpec): GeneratedArtifact {
+  const toolsBlock = spec.tools.length
+    ? `## Tools\n${spec.tools.map((t) => `- ${t}`).join("\n")}`
+    : "";
+  const content = [
+    `## Role\n${spec.role}`,
+    `## When to use\n${spec.whenToUse}`,
+    `## Context budget\n${spec.contextBudget}`,
+    `## Handoff points\n${spec.handoffPoints}`,
+    toolsBlock,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return {
+    kind: "subagent",
+    name: spec.name,
+    description: spec.role,
+    trigger: spec.whenToUse,
+    content,
+    sourceTurns: [],
+    confidence: spec.confidence,
+  };
 }
 
 function pushArtifactItems(
@@ -58,7 +68,7 @@ function pushArtifactItems(
   artifacts.forEach((a, i) => {
     items.push({
       id: `${prefix}-art-${i}`,
-      path: defaultArtifactPath(a, agent),
+      path: resolveArtifactApplyPath(agent, a),
       content: a.rendered ?? a.content,
       action: "create",
       selected: a.confidence !== "low",
@@ -68,11 +78,11 @@ function pushArtifactItems(
   });
 }
 
-function pushMemoryItems(items: ApplyPackItem[], files: MemoryFileDraft[], prefix: string) {
+function pushMemoryItems(items: ApplyPackItem[], files: MemoryFileDraft[], prefix: string, agent: AgentKind) {
   files.forEach((f, i) => {
     items.push({
       id: `${prefix}-mem-${i}`,
-      path: f.path,
+      path: memoryApplyPath(agent, f.path, f.purpose),
       content: f.content,
       action: f.action === "create" ? undefined : f.action,
       selected: true,
@@ -97,14 +107,14 @@ export function collectApplyPackItems(
       pushArtifactItems(items, structured.items, agent, prefix);
       break;
     case "memory-files":
-      pushMemoryItems(items, structured.files, prefix);
+      pushMemoryItems(items, structured.files, prefix, agent);
       break;
     case "memory-diff":
       structured.items.forEach((item, i) => {
         if (item.action === "skip") return;
         items.push({
           id: `${prefix}-diff-${i}`,
-          path: item.path,
+          path: memoryApplyPath(agent, item.path),
           content: item.diffPreview,
           action: item.action === "append" ? "append" : item.action === "update" ? "update" : "create",
           selected: true,
@@ -119,7 +129,7 @@ export function collectApplyPackItems(
         if (!action) return;
         items.push({
           id: `${prefix}-rule-${i}`,
-          path: item.proposedPath,
+          path: ruleDedupApplyPath(agent, item),
           content: item.content,
           action,
           selected: item.action !== "skip",
@@ -133,7 +143,7 @@ export function collectApplyPackItems(
         if (!item.suggestedMemoryPath || !item.suggestedContent) return;
         items.push({
           id: `${prefix}-recovery-${i}`,
-          path: item.suggestedMemoryPath,
+          path: recoveryApplyPath(agent, item.suggestedMemoryPath, item.action),
           content: item.suggestedContent,
           action: "append",
           selected: item.priority === "critical" || item.priority === "high",
@@ -143,11 +153,29 @@ export function collectApplyPackItems(
         });
       });
       break;
+    case "orchestration":
+      structured.agents.forEach((spec, i) => {
+        const artifact = subAgentSpecToArtifact(spec);
+        items.push({
+          id: `${prefix}-subagent-${i}`,
+          path: resolveArtifactApplyPath(agent, artifact),
+          content: artifact.content,
+          action: "create",
+          selected: spec.confidence !== "low",
+          confidence: spec.confidence,
+          label: `subagent: ${spec.name}`,
+          diffPreview: artifact.content.slice(0, 400),
+        });
+      });
+      break;
     default:
       break;
   }
 
-  return items;
+  return disambiguateApplyPaths(items).map((item, i) => ({
+    ...item,
+    id: item.id || `${prefix}-${i}`,
+  }));
 }
 
 export function collectFromAnalysisResult(result: AnalyzeResult, agent: AgentKind): ApplyPackItem[] {
@@ -156,5 +184,5 @@ export function collectFromAnalysisResult(result: AnalyzeResult, agent: AgentKin
 }
 
 export function artifactPathForAgent(agent: AgentKind, artifact: GeneratedArtifact): string {
-  return defaultArtifactPath(artifact, agent);
+  return artifactApplyPath(agent, artifact);
 }
