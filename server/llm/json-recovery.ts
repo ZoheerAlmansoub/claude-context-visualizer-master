@@ -40,6 +40,43 @@ export function extractBalancedJsonObject(raw: string): string | null {
   return null;
 }
 
+/** True when the model output contains a fully closed, parseable JSON object. */
+export function hasCompleteJsonObject(raw: string): boolean {
+  const trimmed = stripCodeFences(raw.trim());
+  const balanced = extractBalancedJsonObject(trimmed);
+  if (balanced) {
+    try {
+      JSON.parse(balanced);
+      return true;
+    } catch {
+      try {
+        parseJsonObjectRobust(trimmed);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+  try {
+    parseJsonObjectRobust(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isTruncatedLlmOutput(
+  raw: string,
+  meta: { finishReason?: string; maxTokens?: number; completionTokens?: number },
+): boolean {
+  const reason = (meta.finishReason ?? "").toLowerCase();
+  if (reason === "length" || reason === "max_tokens" || reason === "max_tokens_reached") {
+    return true;
+  }
+  if (!hasCompleteJsonObject(raw)) return true;
+  return false;
+}
+
 /** Original strategy: drop invalid escape char (preserved for compatibility). */
 export function repairInvalidJsonEscapesLegacy(json: string): string {
   return json.replace(/\\([^"\\/bfnrtu0-9])/g, "$1");
@@ -168,6 +205,38 @@ export function extractJsonStringField(fragment: string, field: string): string 
   return result.trim();
 }
 
+function extractBalancedJsonArrayEnd(source: string, arrStart: number): number {
+  if (source[arrStart] !== "[") return -1;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = arrStart; i < source.length; i++) {
+    const c = source[i]!;
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c === "\\") {
+        escape = true;
+        continue;
+      }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      continue;
+    }
+    if (c === "[") depth++;
+    if (c === "]") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 function parseObjectFragment(fragment: string): Record<string, unknown> | null {
   const chunk = extractBalancedJsonObject(fragment) ?? fragment;
   for (const attempt of uniqueStrings([
@@ -203,6 +272,41 @@ function salvageObjectFields(snippet: string): Record<string, unknown> {
   };
 }
 
+function salvageGrowthAreaFields(snippet: string): Record<string, unknown> {
+  const area = extractJsonStringField(snippet, "area");
+  if (!area) return {};
+  const whyItMatters = extractJsonStringField(snippet, "whyItMatters");
+  const concreteActions = extractJsonStringArray(snippet, "concreteActions");
+  if (!whyItMatters && concreteActions.length === 0) return {};
+  const suggestedRule = extractJsonStringField(snippet, "suggestedRule");
+  const suggestedSkill = extractJsonStringField(snippet, "suggestedSkill");
+  const practiceExercise = extractJsonStringField(snippet, "practiceExercise");
+  return {
+    area,
+    whyItMatters,
+    concreteActions,
+    ...(suggestedRule ? { suggestedRule } : {}),
+    ...(suggestedSkill ? { suggestedSkill } : {}),
+    ...(practiceExercise ? { practiceExercise } : {}),
+  };
+}
+
+function salvageWeeklyPlanFields(snippet: string): Record<string, unknown> {
+  const day = extractJsonStringField(snippet, "day");
+  if (!day) return {};
+  return {
+    day,
+    focus: extractJsonStringField(snippet, "focus"),
+    task: extractJsonStringField(snippet, "task"),
+  };
+}
+
+function salvageArrayItem(arrayField: string, snippet: string): Record<string, unknown> {
+  if (arrayField === "growthAreas") return salvageGrowthAreaFields(snippet);
+  if (arrayField === "weeklyPlan") return salvageWeeklyPlanFields(snippet);
+  return salvageObjectFields(snippet);
+}
+
 function extractObjectArray(raw: string, arrayField: string): Record<string, unknown>[] {
   const sources = uniqueStrings([
     raw,
@@ -220,7 +324,7 @@ function extractObjectArray(raw: string, arrayField: string): Record<string, unk
     if (!match || match.index === undefined) continue;
 
     const arrStart = match.index + match[0].length - 1;
-    const arrEnd = source.indexOf("]", arrStart);
+    const arrEnd = extractBalancedJsonArrayEnd(source, arrStart);
     const sliceEnd = arrEnd === -1 ? source.length : arrEnd;
 
     let searchFrom = arrStart + 1;
@@ -244,7 +348,12 @@ function extractObjectArray(raw: string, arrayField: string): Record<string, unk
 
       const nextBrace = source.indexOf("{", brace + 1);
       const snippetEnd = nextBrace === -1 || nextBrace > sliceEnd ? sliceEnd : nextBrace;
-      const fields = salvageObjectFields(source.slice(brace, snippetEnd));
+      const snippet = source.slice(brace, snippetEnd);
+      if (arrEnd === -1 && !snippet.trimEnd().endsWith("}")) {
+        searchFrom = brace + 1;
+        continue;
+      }
+      const fields = salvageArrayItem(arrayField, snippet);
       if (Object.keys(fields).length > 0) {
         const key = JSON.stringify(fields);
         if (!seen.has(key)) {
@@ -326,6 +435,11 @@ export function salvageAnalysisObject(type: string, raw: string): Record<string,
     if (scoreMatch) result.healthScore = Number(scoreMatch[1]);
     const risks = extractJsonStringArray(trimmed, "openRisks");
     if (risks.length) result.openRisks = risks;
+  }
+
+  if (type === "user-growth-plan" || type === "user-ai-fluency") {
+    const scoreMatch = trimmed.match(/"overallScore"\s*:\s*(\d+)/);
+    if (scoreMatch) result.overallScore = Number(scoreMatch[1]);
   }
 
   if (type === "project-synthesis") {

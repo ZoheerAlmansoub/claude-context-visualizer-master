@@ -12,5 +12,5 @@
     "lib": ["ESNext"],
     "types": ["bun-types"]
   },
-  "include": ["server/**/*.ts"]
+  "include": ["server/**/*.ts", "shared/**/*.ts"]
 }

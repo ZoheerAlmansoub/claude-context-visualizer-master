@@ -27,6 +27,7 @@ import {
 } from "./governance/pipeline.ts";
 import { getGovernanceSchedule, isGovernanceEligible } from "./governance/schedule.ts";
 import { exportPlaybookToProject } from "./governance/playbook.ts";
+import { getGovernanceConfigResponse } from "./governance/config-api.ts";
 import { getProjectInsights } from "./insights/indexer.ts";
 import type { AnalyzeType, LlmProviderKind } from "./types.ts";
 
@@ -65,6 +66,15 @@ async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
   }
 }
 
+/** Decode path segments (e.g. project%3Aslug → project:slug for project-scoped analysis cache). */
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 const server = Bun.serve({
   port: PORT,
   /** Allow long-running analyze/improve-prompt handlers (seconds; max 255) */
@@ -86,6 +96,12 @@ const server = Bun.serve({
 
       if (path === "/api/config/llm" && req.method === "GET") {
         return json({ ...getPublicLlmConfig(), analysisTypes: ANALYSIS_TYPES });
+      }
+
+      if (path === "/api/governance/config" && req.method === "GET") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        return json(getGovernanceConfigResponse(agent));
       }
 
       if (path === "/api/config/llm/settings" && req.method === "GET") {
@@ -129,7 +145,7 @@ const server = Bun.serve({
       if (transcriptMatch && req.method === "GET") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = transcriptMatch[1]!;
+        const sessionId = decodePathSegment(transcriptMatch[1]!);
         const filePath = await findSessionById(sessionId, agent);
         if (!filePath) return notFound("session not found");
         const postCompactionOnly = url.searchParams.get("postCompactionOnly") === "true";
@@ -143,7 +159,7 @@ const server = Bun.serve({
       if (userMessagesMatch && req.method === "GET") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = userMessagesMatch[1]!;
+        const sessionId = decodePathSegment(userMessagesMatch[1]!);
         const filePath = await findSessionById(sessionId, agent);
         if (!filePath) return notFound("session not found");
         const format = (url.searchParams.get("format") ?? "markdown") as "markdown" | "plain" | "json";
@@ -166,7 +182,7 @@ const server = Bun.serve({
       if (analyzeMatch && req.method === "POST") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = analyzeMatch[1]!;
+        const sessionId = decodePathSegment(analyzeMatch[1]!);
         const filePath = await findSessionById(sessionId, agent);
         if (!filePath) return notFound("session not found");
         const body = await readJsonBody(req);
@@ -190,7 +206,7 @@ const server = Bun.serve({
       if (analysesListMatch && req.method === "GET") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = analysesListMatch[1]!;
+        const sessionId = decodePathSegment(analysesListMatch[1]!);
         const analyses = await listSessionAnalyses(agent, sessionId);
         return json({ analyses });
       }
@@ -199,8 +215,8 @@ const server = Bun.serve({
       if (analysisGetMatch && req.method === "GET") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = analysisGetMatch[1]!;
-        const analysisId = analysisGetMatch[2]!;
+        const sessionId = decodePathSegment(analysisGetMatch[1]!);
+        const analysisId = decodePathSegment(analysisGetMatch[2]!);
         const result = await getSessionAnalysis(agent, sessionId, analysisId);
         if (!result) return notFound("analysis not found");
         return json(result);
@@ -210,7 +226,7 @@ const server = Bun.serve({
       if (improvementsListMatch && req.method === "GET") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = improvementsListMatch[1]!;
+        const sessionId = decodePathSegment(improvementsListMatch[1]!);
         const improvements = await listPromptImprovements(agent, sessionId);
         return json({ improvements });
       }
@@ -219,7 +235,7 @@ const server = Bun.serve({
       if (improveMatch && req.method === "POST") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = improveMatch[1]!;
+        const sessionId = decodePathSegment(improveMatch[1]!);
         const messageId = decodeURIComponent(improveMatch[2]!);
         const filePath = await findSessionById(sessionId, agent);
         if (!filePath) return notFound("session not found");
@@ -238,7 +254,7 @@ const server = Bun.serve({
       if (artifactsMatch && req.method === "POST") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = artifactsMatch[1]!;
+        const sessionId = decodePathSegment(artifactsMatch[1]!);
         const filePath = await findSessionById(sessionId, agent);
         if (!filePath) return notFound("session not found");
         const body = await readJsonBody(req);
@@ -257,7 +273,7 @@ const server = Bun.serve({
       if (sessionInsightsMatch && req.method === "GET") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = sessionInsightsMatch[1]!;
+        const sessionId = decodePathSegment(sessionInsightsMatch[1]!);
         const filePath = await findSessionById(sessionId, agent);
         if (!filePath) return notFound("session not found");
         const transcript = await computeTranscript(filePath, agent, sessionId);
@@ -385,7 +401,7 @@ const server = Bun.serve({
       if (sessionGovernMatch && req.method === "POST") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = sessionGovernMatch[1]!;
+        const sessionId = decodePathSegment(sessionGovernMatch[1]!);
         const body = await readJsonBody(req);
         const result = await runSessionGovernancePipeline({
           agent,
@@ -465,12 +481,27 @@ const server = Bun.serve({
         if (!agent) return badRequest("unsupported agent");
         const projectSlug = decodeURIComponent(playbookMatch[1]!);
         const format = url.searchParams.get("format") ?? "md";
-        const govern = await runProjectGovernancePipeline({
-          agent,
-          projectSlug,
-          locale: (url.searchParams.get("locale") as "ar" | "en") ?? "en",
-          force: url.searchParams.get("refresh") === "true",
-        });
+        const pipelineId = url.searchParams.get("pipelineId");
+        const refresh = url.searchParams.get("refresh") === "true";
+
+        let govern: Awaited<ReturnType<typeof getGovernancePipeline>> | Awaited<
+          ReturnType<typeof runProjectGovernancePipeline>
+        >;
+
+        if (pipelineId && !refresh) {
+          govern = await getGovernancePipeline(pipelineId);
+          if (!govern || govern.projectSlug !== projectSlug) {
+            return notFound("pipeline not found for this project");
+          }
+        } else {
+          govern = await runProjectGovernancePipeline({
+            agent,
+            projectSlug,
+            locale: (url.searchParams.get("locale") as "ar" | "en") ?? "en",
+            force: refresh,
+          });
+        }
+
         const save = url.searchParams.get("save") === "true";
         let savedPath: string | undefined;
         if (save && govern.projectRoot && govern.playbookMarkdown) {
@@ -489,7 +520,7 @@ const server = Bun.serve({
       if (snapshotMatch && req.method === "GET") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = snapshotMatch[1]!;
+        const sessionId = decodePathSegment(snapshotMatch[1]!);
         const filePath = await findSessionById(sessionId, agent);
         if (!filePath) return notFound("session not found");
         const mtimeMs = await resolveSessionSourceMtimeMs(filePath, agent);
@@ -504,7 +535,7 @@ const server = Bun.serve({
       if (invalidateMatch && req.method === "POST") {
         const agent = requestedAgent(url);
         if (!agent) return badRequest("unsupported agent");
-        const sessionId = invalidateMatch[1]!;
+        const sessionId = decodePathSegment(invalidateMatch[1]!);
         const ok = await invalidateCache(agent, sessionId);
         return json({ ok });
       }

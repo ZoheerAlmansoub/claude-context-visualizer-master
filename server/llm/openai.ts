@@ -1,6 +1,7 @@
 import type { LLMProvider, LlmRequest, LlmResponse } from "./provider.ts";
 import { getLlmConfig } from "../config.ts";
 import { llmFetch } from "./http.ts";
+import { llmResponseFromOpenAiCompletion } from "./completion-response.ts";
 
 export class OpenAIProvider implements LLMProvider {
   id = "openai";
@@ -27,13 +28,7 @@ export class OpenAIProvider implements LLMProvider {
       throw new Error(`OpenAI API error ${res.status}: ${err}`);
     }
 
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { total_tokens?: number };
-    };
-    return {
-      text: data.choices?.[0]?.message?.content ?? "",
-      tokensUsed: data.usage?.total_tokens,
-    };
+    const data = (await res.json()) as Parameters<typeof llmResponseFromOpenAiCompletion>[0];
+    return llmResponseFromOpenAiCompletion(data);
   }
 }

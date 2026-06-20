@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getSessionAnalysis } from "../analysis.ts";
 import { CACHE_DIR } from "../paths.ts";
+import { SUMMARY_STEP_TYPES } from "../../shared/governance-config.ts";
 import type {
   AgentKind,
   AnalyzeType,
@@ -25,17 +26,6 @@ export type GovernancePipelineListItem = {
   hasSummary: boolean;
   autoApply?: boolean;
 };
-
-const SUMMARY_STEP_TYPES: AnalyzeType[] = [
-  "project-synthesis",
-  "project-health-report",
-  "user-growth-plan",
-  "token-audit",
-  "loop-diagnosis",
-  "memory-file-drafts",
-  "artifact-blueprint",
-  "agentic-lessons",
-];
 
 function pipelineCachePath(id: string): string {
   return join(CACHE_DIR, "pipeline", `${id}.json`);
@@ -172,14 +162,87 @@ export async function buildGovernanceSummaryMarkdown(
     }
 
     if (structured?.kind === "user-growth") {
-      if (structured.growthAreas.length) {
-        lines.push("### Growth areas", "");
-        for (const g of structured.growthAreas.slice(0, 5)) {
-          const action = g.concreteActions[0] ?? g.whyItMatters;
-          lines.push(`- **${g.area}:** ${action}`);
+      if (structured.weeklyPlan.length) {
+        lines.push("### Weekly plan", "");
+        for (const d of structured.weeklyPlan) {
+          lines.push(`- **${d.day}** — ${d.focus}: ${d.task}`);
         }
         lines.push("");
       }
+      if (structured.growthAreas.length) {
+        lines.push("### Growth areas", "");
+        for (const g of structured.growthAreas.slice(0, 8)) {
+          lines.push(`- **${g.area}:** ${g.whyItMatters}`);
+          for (const a of g.concreteActions.slice(0, 6)) {
+            lines.push(`  - ${a}`);
+          }
+        }
+        lines.push("");
+      }
+    }
+
+    if (structured?.kind === "artifacts" && structured.items.length) {
+      lines.push("**Tool / artifact suggestions:**", "");
+      for (const a of structured.items.slice(0, 4)) {
+        lines.push(`- \`${a.kind}\` **${a.name}** (${a.confidence}): ${a.description.slice(0, 120)}`);
+      }
+      lines.push("");
+    }
+
+    if (structured?.kind === "prevention-rules" && structured.rules.length) {
+      lines.push("**Prevention rules:**", "");
+      for (const r of structured.rules.slice(0, 4)) {
+        lines.push(`- **${r.name}** (${r.confidence}): ${r.trigger.slice(0, 100)}`);
+      }
+      lines.push("");
+    }
+
+    if (structured?.kind === "mcp-tool-audit" && structured.findings.length) {
+      lines.push("**MCP tool findings:**", "");
+      for (const f of structured.findings.slice(0, 5)) {
+        lines.push(`- **${f.toolName}** (${f.severity}): ${f.pattern.slice(0, 100)}`);
+      }
+      lines.push("");
+    }
+
+    if (structured?.kind === "user-fluency" && structured.dimensions.length) {
+      lines.push("**Fluency dimensions:**", "");
+      for (const d of structured.dimensions.slice(0, 4)) {
+        lines.push(`- **${d.label}:** ${d.score}/100 — ${d.evidence.slice(0, 80)}`);
+      }
+      lines.push("");
+    }
+
+    if (structured?.kind === "compaction-recovery" && structured.recoveryItems.length) {
+      lines.push("**Compaction recovery:**", "");
+      for (const r of structured.recoveryItems.slice(0, 4)) {
+        lines.push(`- (${r.priority}) ${r.action.slice(0, 100)}`);
+      }
+      lines.push("");
+    }
+
+    if (structured?.kind === "memory-diff" && structured.items.length) {
+      lines.push("**Memory diff items:**", "");
+      for (const item of structured.items.filter((i) => i.action !== "skip").slice(0, 4)) {
+        lines.push(`- \`${item.path}\` (${item.action}): ${item.rationale.slice(0, 80)}`);
+      }
+      lines.push("");
+    }
+
+    if (structured?.kind === "rule-dedup" && structured.items.length) {
+      lines.push("**Rule dedup:**", "");
+      for (const item of structured.items.filter((i) => i.action !== "skip").slice(0, 4)) {
+        lines.push(`- **${item.name}** → \`${item.proposedPath}\` (${item.action})`);
+      }
+      lines.push("");
+    }
+
+    if (structured?.kind === "memory-files" && structured.files.length) {
+      lines.push("**Memory file drafts:**", "");
+      for (const f of structured.files.slice(0, 4)) {
+        lines.push(`- \`${f.path}\` (${f.action}): ${f.purpose.slice(0, 80)}`);
+      }
+      lines.push("");
     }
   }
 

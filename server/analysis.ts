@@ -10,7 +10,7 @@ import type {
   RecurringPattern,
   SessionTranscript,
 } from "./types.ts";
-import { buildAnalysisPrompt } from "./llm/prompts.ts";
+import { buildAnalysisPrompt, isStructuredAnalysisType } from "./llm/prompts.ts";
 import { buildHeuristicFallbackResult, parseAnalysisResponse } from "./llm/parse-analysis-response.ts";
 import {
   buildAnalysisTranscriptContext,
@@ -21,13 +21,20 @@ import {
   isRetryableGatewayError,
   supportsHeuristicFallback,
 } from "./analysis-budget.ts";
+import {
+  formatTruncatedStructuredAnalysisError,
+  isAcceptableStructuredAnalysis,
+  scaledMaxTokens,
+  structuredAnalysisAttempts,
+} from "./analysis-structured-output.ts";
 import { getProvider, resolveModel } from "./llm/router.ts";
 import { getLlmConfig } from "./config.ts";
 import type { LLMProvider } from "./llm/provider.ts";
 import { loadProjectContext, type ProjectContextSnapshot } from "./project-context.ts";
+import { analysisSessionCacheDirName } from "./analysis-cache-path.ts";
 
 function analysisCacheDir(agent: string, sessionId: string): string {
-  return join(CACHE_DIR, "analysis", agent, sessionId);
+  return join(CACHE_DIR, "analysis", agent, analysisSessionCacheDirName(sessionId));
 }
 
 function comboKey(
@@ -101,6 +108,7 @@ async function callAnalysisLlm(
     gatewaySensitive: boolean;
     projectContext?: ProjectContextSnapshot;
     crossSessionPatterns?: string;
+    maxTokens?: number;
   },
 ) {
   const limits = contextLimitsFor(type, {
@@ -120,32 +128,33 @@ async function callAnalysisLlm(
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    maxTokens: limits.maxTokens,
+    maxTokens: opts.maxTokens ?? limits.maxTokens,
   });
 
   return {
     response,
     patterns: ctx.patterns,
+    maxTokens: opts.maxTokens ?? limits.maxTokens,
   };
 }
 
-type AnalysisAttemptTier = { compact: boolean; ultraCompact: boolean };
+type AnalysisAttemptTier = { compact: boolean; ultraCompact: boolean; maxTokensScale: number };
 
-function analysisAttemptTiers(
+function unstructuredAnalysisAttempts(
   transcript: SessionTranscript,
   gatewaySensitive: boolean,
 ): AnalysisAttemptTier[] {
   const heavy = gatewaySensitive && isHeavySession(transcript);
   if (heavy) {
     return [
-      { compact: true, ultraCompact: false },
-      { compact: true, ultraCompact: true },
+      { compact: true, ultraCompact: false, maxTokensScale: 1 },
+      { compact: true, ultraCompact: true, maxTokensScale: 1 },
     ];
   }
   return [
-    { compact: false, ultraCompact: false },
-    { compact: true, ultraCompact: false },
-    { compact: true, ultraCompact: true },
+    { compact: false, ultraCompact: false, maxTokensScale: 1 },
+    { compact: true, ultraCompact: false, maxTokensScale: 1 },
+    { compact: true, ultraCompact: true, maxTokensScale: 1 },
   ];
 }
 
@@ -161,27 +170,82 @@ async function runAnalysisLlmWithRetries(
     crossSessionPatterns?: string;
   },
 ): Promise<
-  | { mode: "llm"; patterns: RecurringPattern[]; responseText: string; tokensUsed?: number }
+  | {
+      mode: "llm";
+      patterns: RecurringPattern[];
+      responseText: string;
+      tokensUsed?: number;
+      parsed: ReturnType<typeof parseAnalysisResponse>;
+    }
   | { mode: "heuristic"; patterns: RecurringPattern[]; parsed: ReturnType<typeof buildHeuristicFallbackResult> }
 > {
-  const tiers = analysisAttemptTiers(transcript, gatewaySensitive);
+  const structured = isStructuredAnalysisType(type);
+  const attempts = structured
+    ? structuredAnalysisAttempts(transcript, gatewaySensitive)
+    : unstructuredAnalysisAttempts(transcript, gatewaySensitive);
+
   let lastErr: unknown;
 
-  for (const tier of tiers) {
+  for (const tier of attempts) {
+    const limits = contextLimitsFor(type, {
+      compact: tier.compact,
+      ultraCompact: tier.ultraCompact,
+      gatewaySensitive,
+    });
+    const maxTokens = scaledMaxTokens(limits, tier.maxTokensScale);
+
     try {
       const result = await callAnalysisLlm(llm, model, type, transcript, locale, {
         ...tier,
         gatewaySensitive,
         ...contextExtras,
+        maxTokens,
       });
+      const responseText = result.response.text;
+      const parseOpts = {
+        agent: transcript.agent,
+        projectContext: contextExtras.projectContext,
+        toolEvents: transcript.toolEvents,
+        compactionBoundaryIndex: transcript.compactionBoundaryIndex,
+      };
+
+      if (structured) {
+        const parsed = parseAnalysisResponse(type, responseText, locale, result.patterns, parseOpts);
+        if (
+          !isAcceptableStructuredAnalysis(
+            type,
+            responseText,
+            parsed,
+            result.response,
+            maxTokens,
+            locale,
+          )
+        ) {
+          if (tier !== attempts[attempts.length - 1]) continue;
+          throw new Error(formatTruncatedStructuredAnalysisError(type, locale));
+        }
+        return {
+          mode: "llm",
+          patterns: result.patterns,
+          responseText,
+          tokensUsed: result.response.tokensUsed,
+          parsed,
+        };
+      }
+
+      const parsed = parseAnalysisResponse(type, responseText, locale, result.patterns, parseOpts);
       return {
         mode: "llm",
         patterns: result.patterns,
-        responseText: result.response.text,
+        responseText,
         tokensUsed: result.response.tokensUsed,
+        parsed,
       };
     } catch (err) {
       lastErr = err;
+      if (err instanceof Error && /incomplete JSON|JSON غير مكتملة|max_tokens truncation/i.test(err.message)) {
+        throw err;
+      }
       if (!isRetryableGatewayError(err)) {
         throw new Error(formatAnalysisLlmError(err, locale));
       }
@@ -287,12 +351,7 @@ export async function runAnalysis(
   } else {
     responseText = llmResult.responseText;
     tokensUsed = llmResult.tokensUsed;
-    parsed = parseAnalysisResponse(opts.type, responseText, locale, patterns, {
-      agent: transcript.agent,
-      projectContext,
-      toolEvents: transcript.toolEvents,
-      compactionBoundaryIndex: transcript.compactionBoundaryIndex,
-    });
+    parsed = llmResult.parsed;
   }
 
   const createdAt = new Date().toISOString();

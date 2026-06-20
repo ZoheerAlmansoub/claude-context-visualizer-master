@@ -374,6 +374,9 @@ export type GovernancePipelineResult = {
   locale?: "ar" | "en";
   autoApply?: boolean;
   applyResults?: Array<{ path: string; ok: boolean; error?: string }>;
+  /** Session ID used for analysis cache lookups (may differ from UI session for project runs). */
+  analysisSessionId?: string;
+  analysisSessionIds?: string[];
 };
 
 export type GovernancePipelineListItem = {

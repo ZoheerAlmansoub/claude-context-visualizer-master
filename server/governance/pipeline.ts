@@ -3,7 +3,6 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CACHE_DIR } from "../paths.ts";
 import { runAnalysis } from "../analysis.ts";
-import { computeTranscript } from "../transcript.ts";
 import { findSessionMeta } from "../indexer.ts";
 import { getProjectInsights } from "../insights/indexer.ts";
 import { loadProjectContext } from "../project-context.ts";
@@ -14,25 +13,31 @@ import type {
   GovernancePipelineResult,
   GovernancePipelineStep,
   LlmProviderKind,
+  SessionTranscript,
 } from "../types.ts";
-import { generateProjectPlaybook } from "./playbook.ts";
+import {
+  buildPlaybookExcerptFromAnalysis,
+  generateProjectPlaybook,
+} from "./playbook.ts";
 import { buildGovernanceSummaryMarkdown, listGovernancePipelines } from "./history.ts";
-import { PROJECT_PIPELINES, SESSION_PIPELINES } from "./step-lists.ts";
+import { pipelineStepTypes } from "../../shared/governance-config.ts";
 import { recordGovernanceRun } from "./schedule.ts";
 import {
   AUTO_APPLY_ANALYSIS_TYPES,
   collectApplyPackFromAnalysis,
-  filterAutoApplyItems,
+  enrichAndFilterAutoApplyItems,
 } from "../artifacts/apply-collector.ts";
 import { applyArtifactPack } from "../artifacts/write.ts";
 import { getSessionAnalysis } from "../analysis.ts";
+import { buildMultiSessionTranscriptForProject } from "./synthetic-transcript.ts";
+import { getLlmConfig } from "../config.ts";
 
 function pipelineCachePath(id: string): string {
   return join(CACHE_DIR, "pipeline", `${id}.json`);
 }
 
 function resolvePipelineSteps(scope: "session" | "project", mode: GovernancePipelineMode): AnalyzeType[] {
-  return scope === "session" ? SESSION_PIPELINES[mode] : PROJECT_PIPELINES[mode];
+  return pipelineStepTypes(scope, mode);
 }
 
 function formatCrossSessionPatterns(patterns: Awaited<ReturnType<typeof getProjectInsights>>): string {
@@ -57,6 +62,15 @@ async function isCancelled(pipelineId: string): Promise<boolean> {
   return !!current?.cancelled;
 }
 
+function llmConfigured(): boolean {
+  try {
+    const cfg = getLlmConfig();
+    return Boolean(cfg.defaultProvider);
+  } catch {
+    return false;
+  }
+}
+
 type PipelineRunContext = {
   agent: AgentKind;
   scope: "session" | "project";
@@ -76,7 +90,9 @@ type PipelineRunContext = {
   patterns?: Awaited<ReturnType<typeof getProjectInsights>>;
   autoApply?: boolean;
   analysisSessionId: string;
+  analysisSessionIds?: string[];
   projectSessionCount?: number;
+  transcript?: SessionTranscript;
 };
 
 async function executePipelineSteps(
@@ -90,12 +106,18 @@ async function executePipelineSteps(
     cwd: ctx.projectPath,
   });
   payload.projectRoot = projectContext.projectRoot;
+  payload.analysisSessionId = ctx.analysisSessionId;
+  payload.analysisSessionIds = ctx.analysisSessionIds;
 
-  const transcript = await computeTranscript(
-    ctx.transcriptFilePath,
-    ctx.agent,
-    ctx.analysisSessionId,
-  );
+  let transcript = ctx.transcript;
+  if (!transcript) {
+    const { computeTranscript } = await import("../transcript.ts");
+    transcript = await computeTranscript(
+      ctx.transcriptFilePath,
+      ctx.agent,
+      ctx.analysisSessionId,
+    );
+  }
 
   for (let i = 0; i < payload.steps.length; i++) {
     const step = payload.steps[i]!;
@@ -104,6 +126,16 @@ async function executePipelineSteps(
       payload.status = "cancelled";
       await persistPipeline(payload);
       return;
+    }
+
+    if (!llmConfigured()) {
+      payload.steps[i] = {
+        type: step.type,
+        status: "skipped",
+        error: "LLM not configured — step skipped",
+      };
+      await persistPipeline(payload);
+      continue;
     }
 
     payload.steps[i] = { ...step, status: "running" };
@@ -140,6 +172,16 @@ async function executePipelineSteps(
     return;
   }
 
+  const stepAnalyses = [];
+  for (const step of payload.steps) {
+    if (step.status !== "done" || !step.analysisId) {
+      stepAnalyses.push(buildPlaybookExcerptFromAnalysis(step.type, step.status, null, step.error));
+      continue;
+    }
+    const analysis = await getSessionAnalysis(ctx.agent, ctx.analysisSessionId, step.analysisId);
+    stepAnalyses.push(buildPlaybookExcerptFromAnalysis(step.type, step.status, analysis, step.error));
+  }
+
   payload.playbookMarkdown = await generateProjectPlaybook({
     agent: ctx.agent,
     projectSlug: ctx.projectSlug,
@@ -148,6 +190,8 @@ async function executePipelineSteps(
     sessionTitle: ctx.sessionTitle,
     patterns: ctx.patterns,
     steps: payload.steps,
+    stepAnalyses,
+    pipelineId,
   });
   payload.summaryMarkdown = await buildGovernanceSummaryMarkdown(
     ctx.agent,
@@ -161,9 +205,19 @@ async function executePipelineSteps(
     for (const step of payload.steps) {
       if (step.status !== "done" || !step.analysisId || !AUTO_APPLY_ANALYSIS_TYPES.has(step.type)) continue;
       const analysis = await getSessionAnalysis(ctx.agent, ctx.analysisSessionId, step.analysisId);
-      if (analysis) packItems.push(...collectApplyPackFromAnalysis(analysis, ctx.agent));
+      if (analysis) {
+        packItems.push(
+          ...collectApplyPackFromAnalysis(analysis, ctx.agent, {
+            transcript,
+            projectContext,
+          }),
+        );
+      }
     }
-    const toApply = filterAutoApplyItems(packItems).map((i) => ({
+    const toApply = enrichAndFilterAutoApplyItems(packItems, {
+      transcript,
+      projectContext,
+    }).map((i) => ({
       path: i.path,
       content: i.content,
       action: i.action,
@@ -193,6 +247,8 @@ function initPipelinePayload(opts: {
   steps: AnalyzeType[];
   agent: AgentKind;
   sessionId?: string;
+  analysisSessionId?: string;
+  analysisSessionIds?: string[];
   projectSlug: string;
   provider?: LlmProviderKind;
   model?: string;
@@ -209,6 +265,8 @@ function initPipelinePayload(opts: {
     steps: opts.steps.map((type) => ({ type, status: "pending" as const })),
     agent: opts.agent,
     sessionId: opts.sessionId,
+    analysisSessionId: opts.analysisSessionId ?? opts.sessionId,
+    analysisSessionIds: opts.analysisSessionIds,
     projectSlug: opts.projectSlug,
     provider: opts.provider,
     model: opts.model,
@@ -248,6 +306,7 @@ export async function runSessionGovernancePipeline(opts: {
     steps,
     agent: opts.agent,
     sessionId: opts.sessionId,
+    analysisSessionId: opts.sessionId,
     projectSlug: meta.project,
     provider: opts.provider,
     model: opts.model,
@@ -294,11 +353,10 @@ export async function runProjectGovernancePipeline(opts: {
   mode?: GovernancePipelineMode;
   autoApply?: boolean;
 }): Promise<GovernancePipelineResult> {
-  const { listSessions } = await import("../indexer.ts");
-  const sessions = await listSessions(opts.projectSlug, opts.agent);
-  const latest = sessions[0];
-  if (!latest) throw new Error("No sessions in project");
+  const built = await buildMultiSessionTranscriptForProject(opts.agent, opts.projectSlug);
+  if (!built) throw new Error("No sessions in project");
 
+  const { transcript, meta } = built;
   const mode = opts.mode ?? "standard";
   const steps = resolvePipelineSteps("project", mode);
   const patterns = await getProjectInsights(opts.agent, opts.projectSlug, { limit: 30, refresh: true });
@@ -315,7 +373,9 @@ export async function runProjectGovernancePipeline(opts: {
     mode,
     steps,
     agent: opts.agent,
-    sessionId: latest.id,
+    sessionId: meta.sessionIds[0],
+    analysisSessionId: meta.analysisSessionId,
+    analysisSessionIds: meta.sessionIds,
     projectSlug: opts.projectSlug,
     provider: opts.provider,
     model: opts.model,
@@ -333,14 +393,16 @@ export async function runProjectGovernancePipeline(opts: {
     locale: opts.locale ?? "en",
     force: opts.force ?? true,
     projectSlug: opts.projectSlug,
-    transcriptFilePath: latest.filePath,
-    transcriptMtimeMs: latest.mtimeMs,
-    projectPath: latest.projectPath,
+    transcriptFilePath: transcript.filePath,
+    transcriptMtimeMs: meta.mtimeMs,
+    projectPath: meta.projectPath,
     crossPatterns,
     patterns,
     autoApply: payload.autoApply,
-    analysisSessionId: latest.id,
-    projectSessionCount: sessions.length,
+    analysisSessionId: meta.analysisSessionId,
+    analysisSessionIds: meta.sessionIds,
+    projectSessionCount: meta.sessionCount,
+    transcript,
   };
 
   void executePipelineSteps(pipelineId, payload, ctx).catch(async (err) => {
@@ -403,13 +465,11 @@ export async function resumeGovernancePipeline(pipelineId: string): Promise<Gove
       projectPath: meta.projectPath,
       crossPatterns,
       autoApply: payload.autoApply,
-      analysisSessionId: payload.sessionId,
+      analysisSessionId: payload.analysisSessionId ?? payload.sessionId,
     };
   } else if (payload.projectSlug) {
-    const { listSessions } = await import("../indexer.ts");
-    const sessions = await listSessions(payload.projectSlug, payload.agent);
-    const latest = sessions[0];
-    if (!latest) throw new Error("No sessions in project");
+    const built = await buildMultiSessionTranscriptForProject(payload.agent, payload.projectSlug);
+    if (!built) throw new Error("No sessions in project");
     const patterns = await getProjectInsights(payload.agent, payload.projectSlug, { limit: 30 });
     ctx = {
       agent: payload.agent,
@@ -420,13 +480,16 @@ export async function resumeGovernancePipeline(pipelineId: string): Promise<Gove
       locale: payload.locale ?? "en",
       force: true,
       projectSlug: payload.projectSlug,
-      transcriptFilePath: latest.filePath,
-      transcriptMtimeMs: latest.mtimeMs,
-      projectPath: latest.projectPath,
+      transcriptFilePath: built.transcript.filePath,
+      transcriptMtimeMs: built.meta.mtimeMs,
+      projectPath: built.meta.projectPath,
       crossPatterns: formatCrossSessionPatterns(patterns),
       patterns,
       autoApply: payload.autoApply,
-      analysisSessionId: latest.id,
+      analysisSessionId: payload.analysisSessionId ?? built.meta.analysisSessionId,
+      analysisSessionIds: payload.analysisSessionIds ?? built.meta.sessionIds,
+      projectSessionCount: built.meta.sessionCount,
+      transcript: built.transcript,
     };
   } else {
     return null;
@@ -441,17 +504,4 @@ export async function resumeGovernancePipeline(pipelineId: string): Promise<Gove
   return payload;
 }
 
-export async function buildSyntheticTranscriptForProject(
-  agent: AgentKind,
-  projectSlug: string,
-): Promise<{ transcript: import("../types.ts").SessionTranscript; meta: { mtimeMs: number; projectPath: string } } | null> {
-  const { listSessions } = await import("../indexer.ts");
-  const sessions = await listSessions(projectSlug, agent);
-  const latest = sessions[0];
-  if (!latest) return null;
-  const transcript = await computeTranscript(latest.filePath, agent, latest.id);
-  return {
-    transcript,
-    meta: { mtimeMs: latest.mtimeMs, projectPath: latest.projectPath },
-  };
-}
+export { buildMultiSessionTranscriptForProject, buildSyntheticTranscriptForProject } from "./synthetic-transcript.ts";

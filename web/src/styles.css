@@ -1466,6 +1466,11 @@ button { font-family: inherit; font-size: inherit; color: inherit; cursor: point
   background: rgb(14 165 233 / 0.08);
   border-color: rgb(14 165 233 / 0.25);
 }
+.analysis-parse-failed {
+  color: #b91c1c;
+  background: rgb(239 68 68 / 0.08);
+  border-color: rgb(239 68 68 / 0.3);
+}
 .analysis-raw-response {
   margin-top: 8px;
   border: 1px dashed var(--border);
@@ -1521,6 +1526,16 @@ button { font-family: inherit; font-size: inherit; color: inherit; cursor: point
 .confidence-high { color: #16a34a; }
 .confidence-medium { color: #ca8a04; }
 .confidence-low { color: var(--text-dim); }
+.grounding-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+.grounding-high { background: rgb(22 163 74 / 0.15); color: #16a34a; }
+.grounding-medium { background: rgb(202 138 4 / 0.15); color: #ca8a04; }
+.grounding-low { background: rgb(239 68 68 / 0.12); color: #dc2626; }
 .artifact-desc, .pattern-desc { font-size: 13px; margin: 0 0 6px; }
 .artifact-trigger { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
 .pattern-count { margin-left: auto; font-weight: 600; color: var(--accent); }

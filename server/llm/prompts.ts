@@ -114,7 +114,12 @@ Critical rules:
   }
 
   return `You are an expert AI agent session analyst specializing in context optimization, loop prevention, and agent artifact design for ${agent}.
-Respond ONLY with valid JSON (no markdown fences). Use ${lang} for all string values.
+Respond ONLY with valid JSON (no markdown fences, no prose before/after the object). Use ${lang} for all string values.
+
+Output contract (mandatory):
+- Return ONE complete JSON object: every array and string must be properly closed.
+- Keep string values concise; prefer fewer, high-signal items over long prose that may be cut off.
+- Do not truncate mid-field — if space is limited, omit optional fields rather than leaving broken JSON.
 
 Critical rules:
 - Ground every finding in session evidence: cite turn numbers, tool names, and patterns from the context below.
@@ -368,7 +373,8 @@ Use compaction boundary metadata and pre/post token stats. Focus on re-injecting
     }
   ]
 }
-Prioritize tools with errors, redundant calls, or schema misuse. Include non-MCP tools only if they dominate failures.`,
+Prioritize tools with errors, redundant calls, or schema misuse. Include non-MCP tools only if they dominate failures.
+Every finding MUST cite toolName from the session tool log, include at least one turn number from that log, and describe a pattern observed in those turns — do not invent tools not present in the transcript.`,
 
     "project-synthesis": `Synthesize this project across multiple sessions. Respond with JSON:
 {

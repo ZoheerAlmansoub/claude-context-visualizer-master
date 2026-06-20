@@ -1,5 +1,14 @@
-import type { AnalyzeResult, AnalyzeType, GeneratedArtifact, RuleDedupItem, StructuredAnalysis, SubAgentSpec } from "../types.ts";
+import type { AnalyzeResult, GeneratedArtifact, RuleDedupItem, StructuredAnalysis, SessionTranscript, SubAgentSpec } from "../types.ts";
 import type { AgentKind } from "../types.ts";
+import { AUTO_APPLY_ANALYSIS_TYPE_SET } from "../../shared/governance-config.ts";
+import type { ProjectContextSnapshot } from "../project-context.ts";
+import {
+  minContentLength,
+  passesAutoApplyGrounding,
+  scoreArtifactGrounding,
+  scoreMemoryDraftGrounding,
+  type GroundingLevel,
+} from "../validation/grounding.ts";
 import {
   artifactApplyPath,
   disambiguateApplyPaths,
@@ -16,6 +25,9 @@ export type ApplyPackItem = {
   selected?: boolean;
   confidence?: "high" | "medium" | "low";
   label?: string;
+  groundingScore?: number;
+  groundingLevel?: GroundingLevel;
+  groundingReasons?: string[];
 };
 
 function mapRuleAction(action: RuleDedupItem["action"]): ApplyPackItem["action"] | null {
@@ -58,9 +70,11 @@ export function collectApplyPackFromStructured(
 
   const pushArtifacts = (artifacts: GeneratedArtifact[], prefix: string) => {
     for (const a of artifacts) {
+      const body = a.rendered ?? a.content;
+      if (body.trim().length < minContentLength()) continue;
       items.push({
         path: resolveArtifactApplyPath(agent, a),
-        content: a.rendered ?? a.content,
+        content: body,
         action: "create",
         selected: a.confidence !== "low",
         confidence: a.confidence,
@@ -78,6 +92,7 @@ export function collectApplyPackFromStructured(
       break;
     case "memory-files":
       for (const f of structured.files) {
+        if (f.content.trim().length < minContentLength()) continue;
         items.push({
           path: memoryApplyPath(agent, f.path, f.purpose),
           content: f.content,
@@ -145,26 +160,74 @@ export function collectApplyPackFromStructured(
   return disambiguateApplyPaths(items);
 }
 
-export function collectApplyPackFromAnalysis(result: AnalyzeResult, agent: AgentKind): ApplyPackItem[] {
+export function collectApplyPackFromAnalysis(
+  result: AnalyzeResult,
+  agent: AgentKind,
+  _ctx?: { transcript?: SessionTranscript; projectContext?: ProjectContextSnapshot },
+): ApplyPackItem[] {
   if (!result.structured) return [];
   return collectApplyPackFromStructured(result.structured, agent);
 }
 
 export function filterAutoApplyItems(items: ApplyPackItem[]): ApplyPackItem[] {
   return items.filter(
-    (i) => i.selected !== false && (i.confidence === "high" || i.confidence === "medium" || !i.confidence),
+    (i) =>
+      i.selected !== false &&
+      i.content.trim().length >= minContentLength() &&
+      (i.confidence === "high" || i.confidence === "medium" || !i.confidence),
   );
 }
 
-export const AUTO_APPLY_ANALYSIS_TYPES = new Set<AnalyzeType>([
-  "memory-file-drafts",
-  "loop-diagnosis",
-  "tool-hardening",
-  "artifact-blueprint",
-  "agent-orchestration",
-  "memory-diff",
-  "rule-dedup",
-  "compaction-recovery",
-]);
+export function enrichAndFilterAutoApplyItems(
+  items: ApplyPackItem[],
+  ctx: { transcript?: SessionTranscript; projectContext?: ProjectContextSnapshot },
+): ApplyPackItem[] {
+  const enriched = items.map((item) => {
+    if (item.label?.startsWith("memory:")) {
+      const path = item.path;
+      const grounding = scoreMemoryDraftGrounding(
+        {
+          path,
+          purpose: item.label.replace(/^memory:\s*/, ""),
+          action: item.action ?? "create",
+          rationale: item.label,
+          content: item.content,
+        },
+        ctx.transcript,
+        ctx.projectContext,
+      );
+      return {
+        ...item,
+        groundingScore: grounding.score,
+        groundingLevel: grounding.level,
+        groundingReasons: grounding.reasons,
+      };
+    }
+
+    const kindMatch = item.label?.match(/^(?:\w+: )?(\w+): /);
+    const artifact: GeneratedArtifact = {
+      kind: (kindMatch?.[1] as GeneratedArtifact["kind"]) ?? "rule",
+      name: item.label?.split(": ").pop() ?? "artifact",
+      description: "",
+      trigger: "",
+      content: item.content,
+      sourceTurns: [],
+      confidence: item.confidence ?? "medium",
+    };
+    const grounding = scoreArtifactGrounding(artifact, ctx.transcript, ctx.projectContext);
+    return {
+      ...item,
+      groundingScore: grounding.score,
+      groundingLevel: grounding.level,
+      groundingReasons: grounding.reasons,
+    };
+  });
+
+  return filterAutoApplyItems(enriched).filter(
+    (i) => !i.groundingLevel || passesAutoApplyGrounding(i.groundingLevel),
+  );
+}
+
+export const AUTO_APPLY_ANALYSIS_TYPES = AUTO_APPLY_ANALYSIS_TYPE_SET;
 
 export { artifactApplyPath, ruleDedupApplyPath, resolveArtifactApplyPath };

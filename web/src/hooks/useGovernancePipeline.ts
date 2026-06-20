@@ -35,6 +35,7 @@ type RunOpts = {
 export function useGovernancePipeline() {
   const [pipeline, setPipeline] = useState<GovernancePipelineResult | null>(null);
   const [running, setRunning] = useState(false);
+  const [pollError, setPollError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -52,6 +53,7 @@ export function useGovernancePipeline() {
           const latest = await api.getGovernancePipeline(pipelineId);
           if (!latest) return;
           setPipeline(latest);
+          setPollError(null);
           if (
             latest.status === "complete" ||
             latest.status === "cancelled" ||
@@ -60,8 +62,8 @@ export function useGovernancePipeline() {
             setRunning(false);
             stopPolling();
           }
-        } catch {
-          /* keep polling */
+        } catch (err) {
+          setPollError(err instanceof Error ? err.message : String(err));
         }
       }, 1200);
     },
@@ -137,6 +139,7 @@ export function useGovernancePipeline() {
     setPipeline,
     running,
     setRunning,
+    pollError,
     runSession,
     runProject,
     stopPipeline,
