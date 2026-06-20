@@ -5,6 +5,7 @@ import { getProvider, resolveModel } from "../llm/router.ts";
 import {
   renderArtifactBodyForAgent,
 } from "./agent-registry.ts";
+import { enrichPatternWithArtifact } from "./templates.ts";
 
 export function renderSkillMarkdown(artifact: GeneratedArtifact): string {
   const slug = artifact.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");

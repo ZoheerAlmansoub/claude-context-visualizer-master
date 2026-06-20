@@ -327,6 +327,16 @@ export function formatStructuredAnalysisMarkdown(
         for (const g of structured.growthAreas) {
           lines.push(`### ${g.area}`, "", g.whyItMatters, "");
           for (const a of g.concreteActions) lines.push(`- ${a}`);
+          if (g.suggestedRule) {
+            lines.push("", `**${h("Suggested rule", "قاعدة مقترحة", locale)}:** ${g.suggestedRule}`);
+          }
+          if (g.suggestedSkill) {
+            lines.push(`**${h("Suggested skill", "مهارة مقترحة", locale)}:** ${g.suggestedSkill}`);
+          }
+          if (g.practiceExercise) {
+            lines.push("", `**${h("Practice", "تمرين", locale)}:** ${g.practiceExercise}`);
+          }
+          lines.push("");
         }
       }
       break;
@@ -568,6 +578,55 @@ function buildHeuristicCompactionRecovery(
   };
 }
 
+function buildHeuristicMemoryDrafts(
+  patterns: RecurringPattern[],
+  projectContext: ProjectContextSnapshot | undefined,
+  agent: AgentKind,
+  locale: "ar" | "en",
+): StructuredAnalysis | undefined {
+  if (!patterns.length) return undefined;
+  const memoryPath = agent === "claude" ? "CLAUDE.md" : "AGENTS.md";
+  const existing = projectContext?.files.find(
+    (f) => f.relativePath.replace(/\\/g, "/").toLowerCase() === memoryPath.toLowerCase(),
+  );
+  const lines = patterns.slice(0, 6).map(
+    (p) => `- **${p.label}** (×${p.count}): ${p.recommendation}`,
+  );
+  const content = [
+    "# Project memory",
+    "",
+    "## Cross-session patterns",
+    "",
+    ...lines,
+    "",
+    "## Notes",
+    "",
+    locale === "ar"
+      ? "مسودة heuristic — راجع ودمج مع الملف الحالي قبل الحفظ."
+      : "Heuristic draft — review and merge with existing file before saving.",
+  ].join("\n");
+
+  return {
+    kind: "memory-files",
+    summary:
+      locale === "ar"
+        ? "مسودة ذاكرة heuristic من أنماط الجلسة."
+        : "Heuristic memory draft from session patterns.",
+    files: [
+      {
+        path: memoryPath,
+        purpose: "Cross-session learnings and recurring fixes",
+        action: existing ? "append" : "create",
+        rationale: patterns
+          .slice(0, 3)
+          .map((p) => p.label)
+          .join("; "),
+        content,
+      },
+    ],
+  };
+}
+
 function buildHeuristicMcpToolAudit(
   toolEvents: ToolEvent[] | undefined,
   locale: "ar" | "en",
@@ -798,6 +857,18 @@ function supplementFromPatterns(
     return structured ?? heuristic;
   }
 
+  if (type === "memory-file-drafts" && patterns.length) {
+    const heuristic = buildHeuristicMemoryDrafts(
+      patterns,
+      opts.projectContext,
+      opts.agent ?? "cursor",
+      locale,
+    );
+    if (heuristic && !structured) return heuristic;
+    if (structured?.kind === "memory-files" && !structured.files.length && heuristic) return heuristic;
+    return structured ?? heuristic;
+  }
+
   if (type === "rule-dedup") {
     const heuristic = buildHeuristicRuleDedup(
       patterns,
@@ -883,7 +954,7 @@ function supplementFromPatterns(
   return structured;
 }
 
-function isStructuredEmpty(structured: StructuredAnalysis | undefined): boolean {
+export function isStructuredEmpty(structured: StructuredAnalysis | undefined): boolean {
   if (!structured) return true;
   switch (structured.kind) {
     case "token-audit":
@@ -1231,12 +1302,10 @@ export function parseAnalysisResponse(
         break;
       }
       case "mcp-tool-audit": {
-        structured = {
-          kind: "mcp-tool-audit",
-          summary: String(parsed.summary ?? "").trim(),
-          findings: Array.isArray(parsed.findings)
-            ? (parsed.findings as Record<string, unknown>[]).map((f) => ({
-                toolName: String(f.toolName ?? "unknown"),
+        const rawFindings = Array.isArray(parsed.findings)
+          ? (parsed.findings as Record<string, unknown>[])
+              .map((f) => ({
+                toolName: String(f.toolName ?? "").trim(),
                 callCount: Number(f.callCount) || 0,
                 errorCount: Number(f.errorCount) || 0,
                 severity: (["critical", "high", "medium", "low"].includes(String(f.severity))
@@ -1244,9 +1313,22 @@ export function parseAnalysisResponse(
                   : "medium") as McpToolFinding["severity"],
                 pattern: String(f.pattern ?? "").trim(),
                 recommendation: String(f.recommendation ?? "").trim(),
-                turns: Array.isArray(f.turns) ? f.turns.map(Number).filter(Boolean) : [],
+                turns: Array.isArray(f.turns)
+                  ? f.turns.map((n) => Number(n)).filter((n) => !Number.isNaN(n) && n > 0)
+                  : [],
               }))
-            : [],
+              .filter(
+                (f) =>
+                  f.toolName.length > 0 &&
+                  f.toolName !== "unknown" &&
+                  f.turns.length > 0 &&
+                  f.pattern.length > 0,
+              )
+          : [];
+        structured = {
+          kind: "mcp-tool-audit",
+          summary: String(parsed.summary ?? "").trim(),
+          findings: rawFindings,
         };
         break;
       }

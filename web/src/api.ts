@@ -351,6 +351,8 @@ export type GovernancePipelineResult = {
   createdAt?: string;
   updatedAt?: string;
   sessionId?: string;
+  analysisSessionId?: string;
+  analysisSessionIds?: string[];
   applyResults?: Array<{ path: string; ok: boolean; error?: string }>;
 };
 
@@ -673,13 +675,27 @@ export const api = {
       `/api/projects/${encodeURIComponent(project)}/govern?agent=${encodeURIComponent(agent)}`,
       body ?? {},
     ),
-  fetchPlaybook: (agent: AgentKind, project: string, opts?: { save?: boolean; refresh?: boolean }) =>
+  fetchPlaybook: (
+    agent: AgentKind,
+    project: string,
+    opts?: { save?: boolean; refresh?: boolean; pipelineId?: string },
+  ) =>
     fetch(
-      `/api/projects/${encodeURIComponent(project)}/playbook?agent=${encodeURIComponent(agent)}&save=${opts?.save ? "true" : "false"}&refresh=${opts?.refresh ? "true" : "false"}`,
+      `/api/projects/${encodeURIComponent(project)}/playbook?agent=${encodeURIComponent(agent)}&save=${opts?.save ? "true" : "false"}&refresh=${opts?.refresh ? "true" : "false"}${opts?.pipelineId ? `&pipelineId=${encodeURIComponent(opts.pipelineId)}` : ""}`,
     ).then(async (r) => {
       if (!r.ok) throw new Error(await r.text());
       return r.text();
     }),
+  fetchGovernanceConfig: (agent: AgentKind) =>
+    get<{
+      sessionPipelines: Record<GovernancePipelineMode, AnalyzeType[]>;
+      projectPipelines: Record<GovernancePipelineMode, AnalyzeType[]>;
+      wizardSteps: AnalyzeType[];
+      summaryStepTypes: AnalyzeType[];
+      autoApplyTypes: AnalyzeType[];
+      agentPathHints: string;
+      primaryMemoryPath: string;
+    }>(`/api/governance/config?agent=${encodeURIComponent(agent)}`),
 };
 
 export async function copyText(text: string): Promise<void> {

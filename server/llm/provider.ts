@@ -9,6 +9,9 @@ export type LlmRequest = {
 export type LlmResponse = {
   text: string;
   tokensUsed?: number;
+  /** Provider stop reason, e.g. stop | length | max_tokens | end_turn */
+  finishReason?: string;
+  completionTokens?: number;
 };
 
 export interface LLMProvider {

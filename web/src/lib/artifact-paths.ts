@@ -1,7 +1,19 @@
 import type { AgentKind, GeneratedArtifact, RuleDedupItem } from "../api";
+import {
+  artifactApplyPath as sharedArtifactApplyPath,
+  resolveArtifactApplyPath as sharedResolveArtifactApplyPath,
+  slugify,
+  primaryMemoryPath,
+} from "@shared/artifact-paths.ts";
 
-export function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "artifact";
+export { slugify, primaryMemoryPath };
+
+export function looksLikeCursorRule(content: string): boolean {
+  return (
+    /alwaysApply:\s*(true|false)/i.test(content) ||
+    /^---\s*\r?\n(?:.*\r?\n)*?---/m.test(content) ||
+    /^#\s*Rule:/m.test(content)
+  );
 }
 
 const GENERIC_MEMORY_PATHS = new Set([
@@ -15,14 +27,6 @@ function basenamePath(path: string): string {
   return path.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? path.toLowerCase();
 }
 
-export function looksLikeCursorRule(content: string): boolean {
-  return (
-    /alwaysApply:\s*(true|false)/i.test(content) ||
-    /^---\s*\r?\n(?:.*\r?\n)*?---/m.test(content) ||
-    /^#\s*Rule:/m.test(content)
-  );
-}
-
 function isGenericMemoryPath(path: string): boolean {
   const norm = path.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
   if (GENERIC_MEMORY_PATHS.has(norm)) return true;
@@ -31,32 +35,7 @@ function isGenericMemoryPath(path: string): boolean {
 }
 
 export function artifactApplyPath(agent: AgentKind, artifact: GeneratedArtifact): string {
-  const slug = slugify(artifact.name);
-  switch (artifact.kind) {
-    case "skill":
-      if (agent === "claude") return `.claude/skills/${slug}/SKILL.md`;
-      if (agent === "pi") return `.pi/skills/${slug}/SKILL.md`;
-      if (agent === "opencode") return `.opencode/skills/${slug}/SKILL.md`;
-      return `~/.cursor/skills/${slug}/SKILL.md`;
-    case "rule":
-      if (agent === "claude") return `.claude/rules/${slug}.md`;
-      if (agent === "pi") return `.pi/rules/${slug}.md`;
-      if (agent === "opencode") return `.opencode/rules/${slug}.md`;
-      return `.cursor/rules/${slug}.mdc`;
-    case "hook":
-      if (agent === "claude") return `.claude/hooks/${slug}.md`;
-      return `.cursor/hooks/${slug}.md`;
-    case "subagent":
-      if (agent === "cursor") return `.cursor/agents/${slug}.md`;
-      return `docs/agents/${slug}.md`;
-    case "tool-hint":
-      if (agent === "cursor") return `.cursor/rules/tool-hints/${slug}.mdc`;
-      if (agent === "claude") return `.claude/rules/tool-hints/${slug}.md`;
-      if (agent === "pi") return `.pi/rules/tool-hints/${slug}.md`;
-      return `.opencode/rules/tool-hints/${slug}.md`;
-    default:
-      return `docs/agent-hints/${slug}.md`;
-  }
+  return sharedArtifactApplyPath(agent, artifact);
 }
 
 export function ruleDedupApplyPath(
@@ -83,8 +62,7 @@ export function ruleDedupApplyPath(
 export function memoryApplyPath(agent: AgentKind, path: string, _purpose?: string): string {
   const trimmed = path.trim().replace(/\\/g, "/");
   if (trimmed) return trimmed;
-  if (agent === "claude") return "CLAUDE.md";
-  return "AGENTS.md";
+  return primaryMemoryPath(agent);
 }
 
 export function recoveryApplyPath(_agent: AgentKind, suggestedPath: string, label: string): string {
@@ -112,5 +90,5 @@ export function disambiguateApplyPaths<T extends { path: string }>(items: T[]): 
 }
 
 export function resolveArtifactApplyPath(agent: AgentKind, artifact: GeneratedArtifact): string {
-  return artifactApplyPath(agent, artifact);
+  return sharedResolveArtifactApplyPath(agent, artifact);
 }

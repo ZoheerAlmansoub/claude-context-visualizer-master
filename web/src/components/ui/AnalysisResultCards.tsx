@@ -27,6 +27,12 @@ import { ActionButton } from "./ActionButton";
 import { MarkdownView } from "./MarkdownView";
 import { ApplyPackPanel } from "./ApplyPackPanel";
 import { collectFromAnalysisResult } from "../../lib/apply-pack";
+import {
+  groundingBadgeLabel,
+  scoreArtifactGrounding,
+  scoreMemoryDraftGrounding,
+  type GroundingLevel,
+} from "@shared/grounding.ts";
 
 type Props = {
   result: AnalyzeResult;
@@ -72,6 +78,11 @@ const LABELS = {
     sourceHybridBody: "LLM insights merged with patterns detected in the session.",
     appendNote: "append/update: verify existing file before saving (overwrite).",
     keyDecisions: "Key decisions",
+    grounding: "Grounding",
+    weeklyPlan: "Weekly plan",
+    suggestedRule: "Suggested rule",
+    suggestedSkill: "Suggested skill",
+    practiceExercise: "Practice exercise",
   },
   ar: {
     summary: "الملخص",
@@ -107,6 +118,11 @@ const LABELS = {
     sourceHybridBody: "نتائج النموذج مدمجة مع أنماط مكتشفة في الجلسة.",
     appendNote: "append/update: تحقق من الملف الحالي قبل الحفظ (يستبدل المحتوى).",
     keyDecisions: "قرارات رئيسية",
+    grounding: "ربط بالأدلة",
+    weeklyPlan: "الخطة الأسبوعية",
+    suggestedRule: "قاعدة مقترحة",
+    suggestedSkill: "مهارة مقترحة",
+    practiceExercise: "تمرين عملي",
   },
 } as const;
 
@@ -152,6 +168,14 @@ function WasteTable({ items, L }: { items: TokenWasteItem[]; L: LabelSet }) {
 
 import { artifactApplyPath } from "../../lib/artifact-paths";
 
+function GroundingBadge({ level, locale }: { level: GroundingLevel; locale: "ar" | "en" }) {
+  return (
+    <span className={`grounding-badge grounding-${level}`} title={groundingBadgeLabel(level, locale)}>
+      {groundingBadgeLabel(level, locale)}
+    </span>
+  );
+}
+
 function ArtifactCard({
   artifact,
   id,
@@ -160,6 +184,7 @@ function ArtifactCard({
   L,
   agent = "cursor",
   projectRoot,
+  locale = "en",
 }: {
   artifact: GeneratedArtifact;
   id: string;
@@ -168,10 +193,12 @@ function ArtifactCard({
   L: LabelSet;
   agent?: AgentKind;
   projectRoot?: string;
+  locale?: "ar" | "en";
 }) {
   const [expanded, setExpanded] = useState(false);
   const [savePath, setSavePath] = useState(artifactApplyPath(agent, artifact));
   const body = artifact.rendered ?? artifact.content;
+  const grounding = scoreArtifactGrounding(artifact);
 
   const save = async () => {
     const path = savePath.trim() || prompt("Enter full file path:", "")?.trim();
@@ -190,6 +217,7 @@ function ArtifactCard({
         <span className={`badge badge-${artifact.kind}`}>{artifact.kind}</span>
         <strong>{artifact.name}</strong>
         <span className={`confidence confidence-${artifact.confidence}`}>{artifact.confidence}</span>
+        <GroundingBadge level={grounding.level} locale={locale} />
       </div>
       <p className="artifact-desc">{artifact.description}</p>
       <p className="artifact-trigger">
@@ -232,6 +260,7 @@ function MemoryFileCard({
   onCopy,
   L,
   projectRoot,
+  locale = "en",
 }: {
   file: MemoryFileDraft;
   id: string;
@@ -239,9 +268,11 @@ function MemoryFileCard({
   onCopy: (id: string, text: string) => void;
   L: LabelSet;
   projectRoot?: string;
+  locale?: "ar" | "en";
 }) {
   const [expanded, setExpanded] = useState(false);
   const [savePath, setSavePath] = useState(file.path);
+  const grounding = scoreMemoryDraftGrounding(file);
 
   const save = async () => {
     const path = savePath.trim();
@@ -265,6 +296,7 @@ function MemoryFileCard({
       <div className="artifact-header">
         <span className="badge badge-memory">{file.action}</span>
         <strong>{file.path}</strong>
+        <GroundingBadge level={grounding.level} locale={locale} />
       </div>
       <p className="artifact-desc">
         {L.purpose}: {file.purpose}
@@ -384,6 +416,7 @@ function StructuredBody({
   L,
   agent = "cursor",
   projectRoot,
+  locale = "en",
 }: {
   structured: StructuredAnalysis;
   prefix: string;
@@ -392,6 +425,7 @@ function StructuredBody({
   L: LabelSet;
   agent?: AgentKind;
   projectRoot?: string;
+  locale?: "ar" | "en";
 }) {
   switch (structured.kind) {
     case "token-audit":
@@ -443,6 +477,7 @@ function StructuredBody({
                   L={L}
                   agent={agent}
                   projectRoot={projectRoot}
+                  locale={locale}
                 />
               ))}
             </div>
@@ -476,6 +511,7 @@ function StructuredBody({
                   onCopy={onCopy}
                   L={L}
                   projectRoot={projectRoot}
+                  locale={locale}
                 />
               ))}
             </div>
@@ -548,6 +584,18 @@ function StructuredBody({
               <strong>Score:</strong> {structured.overallScore}/100
             </p>
           </section>
+          {structured.kind === "user-growth" && structured.weeklyPlan.length > 0 && (
+            <section className="analysis-section">
+              <h4>{L.weeklyPlan}</h4>
+              <ul className="analysis-weekly-plan">
+                {structured.weeklyPlan.map((d) => (
+                  <li key={d.day}>
+                    <strong>{d.day}</strong> — {d.focus}: {d.task}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           {structured.growthAreas.map((g) => (
             <section key={g.area} className="analysis-section">
               <h4>{g.area}</h4>
@@ -557,6 +605,21 @@ function StructuredBody({
                   <li key={a}>{a}</li>
                 ))}
               </ul>
+              {g.suggestedRule && (
+                <p>
+                  <strong>{L.suggestedRule}:</strong> {g.suggestedRule}
+                </p>
+              )}
+              {g.suggestedSkill && (
+                <p>
+                  <strong>{L.suggestedSkill}:</strong> {g.suggestedSkill}
+                </p>
+              )}
+              {g.practiceExercise && (
+                <p>
+                  <strong>{L.practiceExercise}:</strong> {g.practiceExercise}
+                </p>
+              )}
             </section>
           ))}
         </>
@@ -796,6 +859,7 @@ export function AnalysisResultCards({ result, copiedId, onCopy, locale, agent = 
   const isRecoveryNotice =
     !!result.parseWarning &&
     (/auto-repaired|Partial results|Partial|إصلاح JSON|جزء من النتائج/i.test(result.parseWarning));
+  const isPartialFailure = isRecoveryNotice;
   const showParseWarning = Boolean(result.parseWarning);
   const showRawResponse =
     !!result.rawLlmResponse?.trim() &&
@@ -808,13 +872,28 @@ export function AnalysisResultCards({ result, copiedId, onCopy, locale, agent = 
       )}
       {showParseWarning && (
         <div
-          className={`analysis-parse-warning${hasStructured ? " analysis-parse-recovered" : ""}`}
+          className={`analysis-parse-warning${hasStructured && !isPartialFailure ? " analysis-parse-recovered" : ""}${isPartialFailure ? " analysis-parse-failed" : ""}`}
           role="status"
         >
           <AlertTriangle size={14} />
           <span>
-            <strong>{isRecoveryNotice ? (locale === "ar" ? "استرداد تلقائي" : "Auto-recovered") : L.parseWarning}:</strong>{" "}
-            {result.parseWarning}
+            <strong>
+              {isPartialFailure
+                ? locale === "ar"
+                  ? "تحليل غير مكتمل"
+                  : "Incomplete analysis"
+                : isRecoveryNotice
+                  ? locale === "ar"
+                    ? "استرداد تلقائي"
+                    : "Auto-recovered"
+                  : L.parseWarning}
+              :
+            </strong>{" "}
+            {isPartialFailure
+              ? locale === "ar"
+                ? "استجابة النموذج JSON مقطوعة — أعد تشغيل التحليل (Force). لا تعتمد على هذه النتائج."
+                : "Model JSON was truncated — re-run analysis (Force). Do not rely on this partial output."
+              : result.parseWarning}
           </span>
         </div>
       )}
@@ -828,6 +907,7 @@ export function AnalysisResultCards({ result, copiedId, onCopy, locale, agent = 
             L={L}
             agent={agent}
             projectRoot={projectRoot}
+            locale={locale}
           />
           <ApplyPackPanel
             items={collectFromAnalysisResult(result, agent)}

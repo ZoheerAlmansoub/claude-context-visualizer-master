@@ -29,6 +29,7 @@ const HEURISTIC_FALLBACK_TYPES = new Set<AnalyzeType>([
   "compaction-recovery",
   "mcp-tool-audit",
   "project-synthesis",
+  "project-health-report",
 ]);
 
 export function supportsHeuristicFallback(type: AnalyzeType): boolean {
@@ -81,7 +82,7 @@ export function contextLimitsFor(
       case "project-health-report":
       case "user-ai-fluency":
       case "user-growth-plan":
-        return { ...ultraBase, userMessages: 2_000, conversation: 1_600, maxTokens: 1280 };
+        return { ...ultraBase, userMessages: 2_000, conversation: 1_600, maxTokens: 4096 };
       case "agentic-lessons":
       case "summarize":
       case "intent-map":
@@ -146,7 +147,7 @@ export function contextLimitsFor(
         ...artifactHeavy,
         userMessages: compact ? 5_000 : gw ? 10_000 : 20_000,
         conversation: compact ? 4_000 : gw ? 8_000 : 18_000,
-        maxTokens: compact ? 1536 : gw ? 2048 : 4096,
+        maxTokens: compact ? 3072 : gw ? 4096 : 8192,
       };
     default:
       return markdown;

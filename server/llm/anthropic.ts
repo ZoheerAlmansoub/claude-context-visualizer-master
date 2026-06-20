@@ -1,6 +1,7 @@
 import type { LLMProvider, LlmRequest, LlmResponse } from "./provider.ts";
 import { getLlmConfig } from "../config.ts";
 import { llmFetch } from "./http.ts";
+import { llmResponseFromAnthropicMessage } from "./completion-response.ts";
 
 export class AnthropicProvider implements LLMProvider {
   id = "anthropic";
@@ -32,13 +33,7 @@ export class AnthropicProvider implements LLMProvider {
       throw new Error(`Anthropic API error ${res.status}: ${err}`);
     }
 
-    const data = (await res.json()) as {
-      content?: Array<{ type: string; text?: string }>;
-      usage?: { input_tokens?: number; output_tokens?: number };
-    };
-    const text = data.content?.map((c) => c.text ?? "").join("") ?? "";
-    const tokensUsed =
-      (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
-    return { text, tokensUsed };
+    const data = (await res.json()) as Parameters<typeof llmResponseFromAnthropicMessage>[0];
+    return llmResponseFromAnthropicMessage(data);
   }
 }

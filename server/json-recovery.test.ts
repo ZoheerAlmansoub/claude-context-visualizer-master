@@ -23,6 +23,49 @@ second line"}]}`;
     expect(String((parsed.files as Array<{ content: string }>)[0]?.content)).toContain("ERP-SAP");
   });
 
+  test("salvage extracts user-growth plan when JSON is truncated mid growthAreas", () => {
+    const raw = `{
+  "summary": "Growth plan overview",
+  "overallScore": 25,
+  "weeklyPlan": [
+    { "day": "Mon", "focus": "Retry discipline", "task": "Stop after 2 failures" },
+    { "day": "Tue", "focus": "Pre-flight", "task": "Verify paths before tools" }
+  ],
+  "growthAreas": [
+    {
+      "area": "Retry loop elimination",
+      "whyItMatters": "600+ retry loops detected",
+      "concreteActions": ["Stop after 2 failures", "Change approach"],
+      "suggestedRule": "stop-after-2-failures",
+      "suggestedSkill": "debugging-workflow",
+      "practiceExercise": "Pick a failing command and diagnose"
+    },
+    {
+      "area": "Input verification",
+      "whyItMatters": "610 tool errors preventable",
+      "concreteActions": ["Verify paths", "Validate syntax"],
+      "suggestedRule": "verify-before-call",
+      "suggestedSkill": "preflight-check",
+      "practiceExercise": "Add verification comment before each call"
+    },
+    {
+      "area": "Efficient context",
+      "whyItMatters": "855 large reads",
+      "concreteActions": [
+        "Use semantic search",
+        "Read with offset/limit",
+        "Summarize outputs >3k tokens",
+        "Use
+`;
+    const salvaged = salvageAnalysisObject("user-growth-plan", raw);
+    expect(salvaged?.overallScore).toBe(25);
+    expect((salvaged?.weeklyPlan as unknown[])?.length).toBe(2);
+    expect((salvaged?.growthAreas as unknown[])?.length).toBe(2);
+    const areas = salvaged?.growthAreas as Array<{ area: string; suggestedRule?: string }>;
+    expect(areas[1]?.area).toBe("Input verification");
+    expect(areas[0]?.suggestedRule).toBe("stop-after-2-failures");
+  });
+
   test("salvage extracts files when JSON is truncated", () => {
     const raw = `{
   "summary": "ERP SaaS platform memory",

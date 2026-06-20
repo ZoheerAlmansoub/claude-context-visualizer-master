@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { AgentKind, ArtifactKind, GeneratedArtifact } from "../types.ts";
+import type { AgentKind, GeneratedArtifact } from "../types.ts";
+import {
+  defaultArtifactRelativePath,
+  agentArtifactPathHints as sharedAgentArtifactPathHints,
+  primaryMemoryPath as sharedPrimaryMemoryPath,
+} from "../../shared/artifact-paths.ts";
 import {
   renderHookMarkdown,
   renderRuleMdc,
@@ -13,36 +18,16 @@ export type ArtifactTarget = {
   scope: "project" | "user";
 };
 
-function slug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
-
 export function defaultArtifactTarget(
   agent: AgentKind,
   artifact: GeneratedArtifact,
 ): ArtifactTarget {
-  const s = slug(artifact.name);
-  switch (artifact.kind) {
-    case "skill":
-      if (agent === "cursor") return { relativePath: `~/.cursor/skills/${s}/SKILL.md`, scope: "user" };
-      if (agent === "claude") return { relativePath: join(".claude", "skills", s, "SKILL.md"), scope: "project" };
-      if (agent === "pi") return { relativePath: join(".pi", "skills", s, "SKILL.md"), scope: "project" };
-      return { relativePath: join(".opencode", "skills", s, "SKILL.md"), scope: "project" };
-    case "rule":
-      if (agent === "cursor") return { relativePath: join(".cursor", "rules", `${s}.mdc`), scope: "project" };
-      if (agent === "claude") return { relativePath: join(".claude", "rules", `${s}.md`), scope: "project" };
-      if (agent === "pi") return { relativePath: join(".pi", "rules", `${s}.md`), scope: "project" };
-      return { relativePath: join(".opencode", "rules", `${s}.md`), scope: "project" };
-    case "hook":
-      if (agent === "cursor") return { relativePath: join(".cursor", "hooks", `${s}.md`), scope: "project" };
-      if (agent === "claude") return { relativePath: join(".claude", "hooks", `${s}.md`), scope: "project" };
-      return { relativePath: join("docs", "hooks", `${s}.md`), scope: "project" };
-    case "subagent":
-      if (agent === "cursor") return { relativePath: join(".cursor", "agents", `${s}.md`), scope: "project" };
-      return { relativePath: join("docs", "agents", `${s}.md`), scope: "project" };
-    default:
-      return { relativePath: join("docs", "agent-hints", `${s}.md`), scope: "project" };
-  }
+  const relativePath = defaultArtifactRelativePath(agent, artifact);
+  const scope: ArtifactTarget["scope"] =
+    agent === "cursor" && artifact.kind === "skill" && relativePath.startsWith("~/")
+      ? "user"
+      : "project";
+  return { relativePath, scope };
 }
 
 export function resolveArtifactAbsolutePath(
@@ -89,30 +74,11 @@ export function renderArtifactBodyForAgent(agent: AgentKind, artifact: Generated
 }
 
 export function primaryMemoryPath(agent: AgentKind): string {
-  if (agent === "claude") return "CLAUDE.md";
-  return "AGENTS.md";
+  return sharedPrimaryMemoryPath(agent);
 }
 
 export function agentArtifactPathHints(agent: AgentKind): string {
-  const lines: string[] = [];
-  switch (agent) {
-    case "cursor":
-      lines.push(
-        "Cursor: .cursor/rules/*.mdc, ~/.cursor/skills/*/SKILL.md, .cursor/hooks/*.md, .cursor/agents/*.md",
-      );
-      break;
-    case "claude":
-      lines.push("Claude Code: CLAUDE.md, .claude/rules/*.md, .claude/skills/*/SKILL.md");
-      break;
-    case "pi":
-      lines.push("Pi: AGENTS.md, .pi/skills/*/SKILL.md");
-      break;
-    case "opencode":
-      lines.push("OpenCode: AGENTS.md, .opencode/rules/*.md, .opencode/skills/*/SKILL.md");
-      break;
-  }
-  lines.push("Universal: AGENTS.md, design.md, docs/context/*.md");
-  return lines.join("\n");
+  return sharedAgentArtifactPathHints(agent);
 }
 
 export function normalizeArtifactForAgent(

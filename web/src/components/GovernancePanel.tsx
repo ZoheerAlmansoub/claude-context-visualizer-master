@@ -73,6 +73,7 @@ export function GovernancePanel({ agent, session, locale = "en" }: Props) {
     runProject,
     stopPipeline,
     resumePipeline,
+    pollError,
   } = useGovernancePipeline();
 
   useEffect(() => {
@@ -125,7 +126,11 @@ export function GovernancePanel({ agent, session, locale = "en" }: Props) {
   const handleExport = async () => {
     setRunning(true);
     try {
-      const md = await api.fetchPlaybook(agent, session.project, { save: true, refresh: true });
+      const md = await api.fetchPlaybook(agent, session.project, {
+        save: true,
+        refresh: false,
+        pipelineId: pipeline?.pipelineId,
+      });
       setPipeline((prev) => ({
         ...(prev ?? { pipelineId: "", scope: "project", steps: [] }),
         playbookMarkdown: md,
@@ -167,6 +172,12 @@ export function GovernancePanel({ agent, session, locale = "en" }: Props) {
           onResume={() => void resumePipeline().catch((e) => alert(String(e)))}
           onExport={() => void handleExport()}
         />
+
+        {pollError && (
+          <p className="panel-hint pipeline-step-error" role="alert">
+            {locale === "ar" ? `خطأ في polling: ${pollError}` : `Pipeline poll error: ${pollError}`}
+          </p>
+        )}
 
         {pipeline && (
           <PipelineWorkflowPanel

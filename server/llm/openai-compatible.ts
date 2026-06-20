@@ -1,5 +1,6 @@
 import type { LLMProvider, LlmRequest, LlmResponse } from "./provider.ts";
 import { llmFetch } from "./http.ts";
+import { llmResponseFromOpenAiCompletion } from "./completion-response.ts";
 
 export type OpenAiCompatConfig = {
   apiKey: string;
@@ -45,19 +46,7 @@ export class OpenAiCompatibleProvider implements LLMProvider {
       throw new Error(`API error ${res.status}: ${err}`);
     }
 
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number };
-    };
-    const usage = data.usage;
-    let tokensUsed = usage?.total_tokens;
-    if (tokensUsed == null && usage) {
-      const sum = (usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0);
-      tokensUsed = sum > 0 ? sum : undefined;
-    }
-    return {
-      text: data.choices?.[0]?.message?.content ?? "",
-      tokensUsed,
-    };
+    const data = (await res.json()) as Parameters<typeof llmResponseFromOpenAiCompletion>[0];
+    return llmResponseFromOpenAiCompletion(data);
   }
 }

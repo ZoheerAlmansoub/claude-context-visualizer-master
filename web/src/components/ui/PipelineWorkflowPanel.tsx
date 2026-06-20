@@ -114,7 +114,7 @@ export function PipelineWorkflowPanel({
   showSummary = true,
 }: Props) {
   const L = STATUS_LABELS[locale];
-  const analysisSessionId = pipeline.sessionId ?? sessionId;
+  const analysisSessionId = pipeline.analysisSessionId ?? pipeline.sessionId ?? sessionId;
   const initializing = isPipelineInitializing(pipeline);
   const progress = pipelineProgress(pipeline.steps);
   const current = pipelineCurrentStep(pipeline.steps);
@@ -125,7 +125,7 @@ export function PipelineWorkflowPanel({
   const [expanded, setExpanded] = useState<string | null>(running ? current : null);
   const [results, setResults] = useState<Record<string, AnalyzeResult>>({});
   const [loadingType, setLoadingType] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [stepLoadErrors, setStepLoadErrors] = useState<Record<string, string>>({});
   const [elapsedMs, setElapsedMs] = useState(0);
 
   useEffect(() => {
@@ -154,12 +154,16 @@ export function PipelineWorkflowPanel({
     setExpanded(type);
     if (!analysisId || results[type]) return;
     setLoadingType(type);
-    setLoadError(null);
+    setStepLoadErrors((prev) => {
+      const next = { ...prev };
+      delete next[type];
+      return next;
+    });
     try {
       const result = await api.getAnalysis(agent, analysisSessionId, analysisId);
       setResults((prev) => ({ ...prev, [type]: result }));
     } catch {
-      setLoadError(L.loadError);
+      setStepLoadErrors((prev) => ({ ...prev, [type]: L.loadError }));
     } finally {
       setLoadingType(null);
     }
@@ -253,8 +257,8 @@ export function PipelineWorkflowPanel({
                     {loadingType === step.type && (
                       <AnalysisLoadingState locale={locale} typeLabel={typeLabel(step.type)} />
                     )}
-                    {loadError && loadingType !== step.type && (
-                      <p className="panel-hint pipeline-step-error">{loadError}</p>
+                    {stepLoadErrors[step.type] && loadingType !== step.type && (
+                      <p className="panel-hint pipeline-step-error">{stepLoadErrors[step.type]}</p>
                     )}
                     {results[step.type] && (
                       <AnalysisResultCards
