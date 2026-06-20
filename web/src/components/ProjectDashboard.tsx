@@ -133,30 +133,6 @@ export function ProjectDashboard({ agent, session, locale = "en", onSelectSessio
         </ActionButton>
       </header>
 
-      {pipeline && (
-        <PipelineWorkflowPanel
-          agent={agent}
-          sessionId={pipeline.sessionId ?? session.id}
-          projectRoot={data.context.projectRoot}
-          pipeline={pipeline}
-          running={running}
-          locale={locale}
-        />
-      )}
-
-      {running && !pipeline && (
-        <section className="card pipeline-workflow-card">
-          <div className="pipeline-active-banner is-running">
-            <div className="pipeline-active-head">
-              <div className="pipeline-active-title">
-                <span className="improvement-loading-spinner" aria-hidden />
-                <span>{locale === "ar" ? "جاري بدء حوكمة المشروع…" : "Starting project governance…"}</span>
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
-
       {data.eligibility.eligible && (
         <div className="notice warning workspace-notice">
           <span className="icon">!</span>
@@ -193,25 +169,38 @@ export function ProjectDashboard({ agent, session, locale = "en", onSelectSessio
         ]}
       />
 
-      <GovernanceRunControls
-        locale={locale}
-        mode={mode}
-        autoApply={autoApply}
-        running={running}
-        pipeline={pipeline}
-        provider={provider}
-        model={model}
-        providers={llmProviders}
-        onProviderChange={setProvider}
-        onModelChange={setModel}
-        showSessionAction={false}
-        showExport={false}
-        onModeChange={setMode}
-        onAutoApplyChange={setAutoApply}
-        onRunProject={govern}
-        onStop={() => void stopPipeline().catch((e) => alert(String(e)))}
-        onResume={() => void resumePipeline().catch((e) => alert(String(e)))}
-      />
+      <section className="governance-workspace">
+        <GovernanceRunControls
+          locale={locale}
+          mode={mode}
+          autoApply={autoApply}
+          running={running}
+          pipeline={pipeline}
+          provider={provider}
+          model={model}
+          providers={llmProviders}
+          onProviderChange={setProvider}
+          onModelChange={setModel}
+          showSessionAction={false}
+          showExport={false}
+          onModeChange={setMode}
+          onAutoApplyChange={setAutoApply}
+          onRunProject={govern}
+          onStop={() => void stopPipeline().catch((e) => alert(String(e)))}
+          onResume={() => void resumePipeline().catch((e) => alert(String(e)))}
+        />
+
+        {pipeline && (
+          <PipelineWorkflowPanel
+            agent={agent}
+            sessionId={pipeline.sessionId ?? session.id}
+            projectRoot={data.context.projectRoot}
+            pipeline={pipeline}
+            running={running}
+            locale={locale}
+          />
+        )}
+      </section>
 
       <GovernanceHistoryPanel
         agent={agent}

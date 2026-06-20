@@ -6,6 +6,7 @@ import {
   type GovernancePipelineResult,
   type LlmProviderKind,
 } from "../api";
+import { createOptimisticPipeline } from "../lib/governance-pipeline-ui";
 
 export function pipelineProgress(steps: GovernancePipelineResult["steps"]): number {
   if (!steps.length) return 0;
@@ -71,14 +72,17 @@ export function useGovernancePipeline() {
 
   const runSession = useCallback(
     async (sessionId: string, opts: RunOpts) => {
+      const mode = opts.mode ?? "standard";
       setRunning(true);
-      setPipeline(null);
+      setPipeline(
+        createOptimisticPipeline({ scope: "session", mode, sessionId }),
+      );
       const result = await api.governSession(opts.agent, sessionId, {
         provider: opts.provider,
         model: opts.model,
         locale: opts.locale,
         force: true,
-        mode: opts.mode,
+        mode,
         autoApply: opts.autoApply,
       });
       setPipeline(result);
@@ -90,14 +94,15 @@ export function useGovernancePipeline() {
 
   const runProject = useCallback(
     async (projectSlug: string, opts: RunOpts) => {
+      const mode = opts.mode ?? "standard";
       setRunning(true);
-      setPipeline(null);
+      setPipeline(createOptimisticPipeline({ scope: "project", mode }));
       const result = await api.governProject(opts.agent, projectSlug, {
         provider: opts.provider,
         model: opts.model,
         locale: opts.locale,
         force: true,
-        mode: opts.mode,
+        mode,
         autoApply: opts.autoApply,
       });
       setPipeline(result);

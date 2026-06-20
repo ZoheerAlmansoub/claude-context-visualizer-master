@@ -147,53 +147,38 @@ export function GovernancePanel({ agent, session, locale = "en" }: Props) {
         </h2>
       </header>
 
-      {pipeline && (
-        <PipelineWorkflowPanel
-          agent={agent}
-          sessionId={session.id}
-          projectRoot={context?.projectRoot}
-          pipeline={pipeline}
-          running={running}
+      <section className="governance-workspace">
+        <GovernanceRunControls
           locale={locale}
+          mode={mode}
+          autoApply={autoApply}
+          running={running}
+          pipeline={pipeline}
+          provider={provider}
+          model={model}
+          providers={llmProviders}
+          onProviderChange={setProvider}
+          onModelChange={setModel}
+          onModeChange={setMode}
+          onAutoApplyChange={setAutoApply}
+          onRunSession={handleRunSession}
+          onRunProject={handleRunProject}
+          onStop={() => void stopPipeline().catch((e) => alert(String(e)))}
+          onResume={() => void resumePipeline().catch((e) => alert(String(e)))}
+          onExport={() => void handleExport()}
         />
-      )}
 
-      {running && !pipeline && (
-        <section className="card pipeline-workflow-card">
-          <div className="pipeline-active-banner is-running">
-            <div className="pipeline-active-head">
-              <div className="pipeline-active-title">
-                <span className="improvement-loading-spinner" aria-hidden />
-                <span>{locale === "ar" ? "جاري بدء Pipeline…" : "Starting pipeline…"}</span>
-              </div>
-            </div>
-            <div className="analysis-skeleton compact">
-              <div className="skeleton-line wide" />
-              <div className="skeleton-line" />
-            </div>
-          </div>
-        </section>
-      )}
-
-      <GovernanceRunControls
-        locale={locale}
-        mode={mode}
-        autoApply={autoApply}
-        running={running}
-        pipeline={pipeline}
-        provider={provider}
-        model={model}
-        providers={llmProviders}
-        onProviderChange={setProvider}
-        onModelChange={setModel}
-        onModeChange={setMode}
-        onAutoApplyChange={setAutoApply}
-        onRunSession={handleRunSession}
-        onRunProject={handleRunProject}
-        onStop={() => void stopPipeline().catch((e) => alert(String(e)))}
-        onResume={() => void resumePipeline().catch((e) => alert(String(e)))}
-        onExport={() => void handleExport()}
-      />
+        {pipeline && (
+          <PipelineWorkflowPanel
+            agent={agent}
+            sessionId={session.id}
+            projectRoot={context?.projectRoot}
+            pipeline={pipeline}
+            running={running}
+            locale={locale}
+          />
+        )}
+      </section>
 
       <GovernanceHistoryPanel
         agent={agent}

@@ -22,6 +22,7 @@ import { AnalysisLoadingState } from "./AnalysisLoadingState";
 import { AnalysisResultCards } from "./AnalysisResultCards";
 import { MarkdownView } from "./MarkdownView";
 import { pipelineCurrentStep, pipelineProgress } from "../../hooks/useGovernancePipeline";
+import { isPipelineInitializing } from "../../lib/governance-pipeline-ui";
 
 type Props = {
   agent: AgentKind;
@@ -49,6 +50,8 @@ const STATUS_LABELS = {
     hideResult: "Hide output",
     noOutput: "No analysis output for this step.",
     loadError: "Could not load analysis result.",
+    initializing: "Initializing pipeline…",
+    stepsCount: "Steps",
   },
   ar: {
     running: "جاري تشغيل pipeline الحوكمة",
@@ -65,6 +68,8 @@ const STATUS_LABELS = {
     hideResult: "إخفاء المخرجات",
     noOutput: "لا توجد مخرجات لهذه الخطوة.",
     loadError: "تعذّر تحميل نتيجة التحليل.",
+    initializing: "جاري تهيئة Pipeline…",
+    stepsCount: "الخطوات",
   },
 } as const;
 
@@ -74,8 +79,10 @@ function typeLabel(type: string): string {
 
 function statusTitle(
   status: GovernancePipelineResult["status"],
-  L: { complete: string; cancelled: string; error: string; running: string },
+  L: { complete: string; cancelled: string; error: string; running: string; initializing: string },
+  initializing: boolean,
 ) {
+  if (initializing) return L.initializing;
   if (status === "complete") return L.complete;
   if (status === "cancelled") return L.cancelled;
   if (status === "error") return L.error;
@@ -108,8 +115,12 @@ export function PipelineWorkflowPanel({
 }: Props) {
   const L = STATUS_LABELS[locale];
   const analysisSessionId = pipeline.sessionId ?? sessionId;
+  const initializing = isPipelineInitializing(pipeline);
   const progress = pipelineProgress(pipeline.steps);
   const current = pipelineCurrentStep(pipeline.steps);
+  const finishedSteps = pipeline.steps.filter(
+    (s) => s.status === "done" || s.status === "error" || s.status === "skipped",
+  ).length;
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(running ? current : null);
   const [results, setResults] = useState<Record<string, AnalyzeResult>>({});
@@ -167,9 +178,9 @@ export function PipelineWorkflowPanel({
         <div className="pipeline-active-head">
           <div className="pipeline-active-title">
             {running && <span className="improvement-loading-spinner" aria-hidden />}
-            <span>{statusTitle(pipeline.status, L)}</span>
-            <span className={`pipeline-status-pill pipeline-status-${pipeline.status ?? "running"}`}>
-              {pipeline.status ?? "running"}
+            <span>{statusTitle(pipeline.status, L, initializing)}</span>
+            <span className={`pipeline-status-pill pipeline-status-${initializing ? "running" : pipeline.status ?? "running"}`}>
+              {initializing ? "starting" : (pipeline.status ?? "running")}
             </span>
           </div>
           {running && (
@@ -182,6 +193,9 @@ export function PipelineWorkflowPanel({
         <div className="pipeline-progress-meta">
           <span>
             {L.progress}: <strong>{progress}%</strong>
+          </span>
+          <span>
+            {L.stepsCount}: <strong>{finishedSteps}/{pipeline.steps.length}</strong>
           </span>
           {current && running && (
             <span>
