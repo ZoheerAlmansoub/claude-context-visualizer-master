@@ -280,6 +280,7 @@ export type AnalyzeResult = {
   analysisSource?: AnalysisSource;
   llmUnavailable?: "timeout";
   parseWarning?: string;
+  rawLlmResponse?: string;
   tokensUsed?: number;
   cached: boolean;
   provider: LlmProviderKind;
@@ -345,8 +346,29 @@ export type GovernancePipelineResult = {
     error?: string;
   }>;
   playbookMarkdown?: string;
+  summaryMarkdown?: string;
   projectRoot?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  sessionId?: string;
   applyResults?: Array<{ path: string; ok: boolean; error?: string }>;
+};
+
+export type GovernancePipelineListItem = {
+  pipelineId: string;
+  scope: "session" | "project";
+  mode?: GovernancePipelineMode;
+  status?: GovernancePipelineStatus;
+  createdAt?: string;
+  updatedAt?: string;
+  sessionId?: string;
+  projectSlug?: string;
+  stepsDone: number;
+  stepsTotal: number;
+  stepsFailed: number;
+  hasPlaybook: boolean;
+  hasSummary: boolean;
+  autoApply?: boolean;
 };
 
 export type ProjectContextSummary = {
@@ -382,6 +404,7 @@ export type RecurringPattern = {
   sessionIds: string[];
   estimatedTokenWaste?: number;
   recommendation: string;
+  suggestedArtifact?: GeneratedArtifact;
 };
 
 export type LlmConfig = {
@@ -586,7 +609,12 @@ export const api = {
       context: ProjectContextSummary;
       patterns: RecurringPattern[];
       sessions: Array<{ id: string; title: string; mtimeMs: number; realTotal: number | null; hasCompaction: boolean }>;
-      schedule: { lastRunAt: string | null; lastSessionCount: number; minNewSessions: number };
+      schedule: {
+        lastRunAt: string | null;
+        lastSessionCount: number;
+        minNewSessions: number;
+        lastPipelineId?: string;
+      };
       eligibility: { eligible: boolean; newSessions: number; reason: string };
     }>(
       `/api/projects/${encodeURIComponent(project)}/dashboard?agent=${encodeURIComponent(agent)}${cwd ? `&cwd=${encodeURIComponent(cwd)}` : ""}`,
@@ -597,6 +625,18 @@ export const api = {
     ),
   getGovernancePipeline: (pipelineId: string) =>
     get<GovernancePipelineResult>(`/api/governance/${encodeURIComponent(pipelineId)}`),
+  governanceHistory: (
+    agent: AgentKind,
+    project: string,
+    opts?: { sessionId?: string; limit?: number },
+  ) => {
+    const params = new URLSearchParams({ agent });
+    if (opts?.sessionId) params.set("sessionId", opts.sessionId);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    return get<{ items: GovernancePipelineListItem[] }>(
+      `/api/projects/${encodeURIComponent(project)}/governance/history?${params}`,
+    );
+  },
   cancelGovernancePipeline: (pipelineId: string) =>
     post<GovernancePipelineResult>(`/api/governance/${encodeURIComponent(pipelineId)}/cancel`, {}),
   resumeGovernancePipeline: (pipelineId: string) =>

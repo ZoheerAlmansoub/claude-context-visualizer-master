@@ -1,17 +1,20 @@
-import { useEffect, useRef, useState } from "react";
-import { Shield, Play, Download, RefreshCw, Square, RotateCcw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Shield, FolderOpen } from "lucide-react";
 import {
   api,
-  copyText,
   type AgentKind,
   type GovernancePipelineMode,
-  type GovernancePipelineResult,
   type LlmProviderKind,
   type ProjectContextSummary,
   type RecurringPattern,
   type SessionListItem,
 } from "../api";
-import { ActionButton } from "./ui/ActionButton";
+import { useGovernancePipeline } from "../context/GovernancePipelineContext";
+import { GovernanceRunControls } from "./ui/GovernanceRunControls";
+import { PanelLoadingSkeleton } from "./ui/PanelLoadingSkeleton";
+import { PatternGrid } from "./ui/PatternGrid";
+import { PipelineWorkflowPanel } from "./ui/PipelineWorkflowPanel";
+import { GovernanceHistoryPanel } from "./ui/GovernanceHistoryPanel";
 
 type Props = {
   agent: AgentKind;
@@ -22,80 +25,61 @@ type Props = {
 const LABELS = {
   en: {
     title: "Project governance",
+    context: "Project context",
     projectRoot: "Project root",
     verified: "Verified",
     unverified: "Unverified",
     patterns: "Cross-session patterns",
-    runSession: "Govern this session",
-    runProject: "Govern this project",
-    exportPlaybook: "Export playbook",
-    running: "Running pipeline…",
-    pipeline: "Pipeline steps",
-    playbook: "Playbook preview",
-    copyPlaybook: "Copy playbook",
     noPatterns: "No cross-session patterns yet.",
     loadContext: "Loading project context…",
-    mode: "Mode",
-    quick: "Quick",
-    standard: "Standard",
-    full: "Full",
-    stop: "Stop",
-    resume: "Resume",
-    progress: "Progress",
     filesLoaded: "memory/rules files",
     expandContext: "Show file list",
+    collapseContext: "Hide file list",
   },
   ar: {
     title: "حوكمة المشروع",
+    context: "سياق المشروع",
     projectRoot: "جذر المشروع",
     verified: "موثّق",
     unverified: "غير موثّق",
     patterns: "أنماط عبر الجلسات",
-    runSession: "حوكمة هذه الجلسة",
-    runProject: "حوكمة المشروع",
-    exportPlaybook: "تصدير Playbook",
-    running: "جاري تشغيل Pipeline…",
-    pipeline: "خطوات Pipeline",
-    playbook: "معاينة Playbook",
-    copyPlaybook: "نسخ Playbook",
     noPatterns: "لا توجد أنماط cross-session بعد.",
     loadContext: "جاري تحميل سياق المشروع…",
-    mode: "الوضع",
-    quick: "سريع",
-    standard: "قياسي",
-    full: "كامل",
-    stop: "إيقاف",
-    resume: "استئناف",
-    progress: "التقدم",
     filesLoaded: "ملفات memory/rules",
     expandContext: "عرض قائمة الملفات",
+    collapseContext: "إخفاء قائمة الملفات",
   },
 } as const;
-
-function pipelineProgress(steps: GovernancePipelineResult["steps"]): number {
-  if (!steps.length) return 0;
-  const done = steps.filter((s) => s.status === "done" || s.status === "error" || s.status === "skipped").length;
-  return Math.round((done / steps.length) * 100);
-}
 
 export function GovernancePanel({ agent, session, locale = "en" }: Props) {
   const L = LABELS[locale];
   const [provider, setProvider] = useState<LlmProviderKind>("openrouter");
   const [model, setModel] = useState("");
+  const [llmProviders, setLlmProviders] = useState<Array<{ id: LlmProviderKind; label: string; configured: boolean }>>([]);
   const [mode, setMode] = useState<GovernancePipelineMode>("standard");
   const [autoApply, setAutoApply] = useState(false);
   const [context, setContext] = useState<ProjectContextSummary | null>(null);
   const [showFiles, setShowFiles] = useState(false);
   const [patterns, setPatterns] = useState<RecurringPattern[]>([]);
-  const [pipeline, setPipeline] = useState<GovernancePipelineResult | null>(null);
   const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+
+  const {
+    pipeline,
+    setPipeline,
+    running,
+    setRunning,
+    runSession,
+    runProject,
+    stopPipeline,
+    resumePipeline,
+  } = useGovernancePipeline();
 
   useEffect(() => {
     api.llmConfig().then((cfg) => {
       setProvider(cfg.defaultProvider);
       setModel(cfg.defaultModel);
+      setLlmProviders(cfg.providers);
     }).catch(() => {});
   }, []);
 
@@ -114,95 +98,38 @@ export function GovernancePanel({ agent, session, locale = "en" }: Props) {
   }, [agent, session.project, session.projectPath]);
 
   useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
+    if (!pipeline?.status || pipeline.status === "running") return;
+    setHistoryRefresh((n) => n + 1);
+  }, [pipeline?.status, pipeline?.pipelineId]);
 
-  const startPolling = (pipelineId: string) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const latest = await api.getGovernancePipeline(pipelineId);
-        if (!latest) return;
-        setPipeline(latest);
-        if (latest.status === "complete" || latest.status === "cancelled" || latest.status === "error") {
-          setRunning(false);
-          if (pollRef.current) clearInterval(pollRef.current);
-        }
-      } catch {}
-    }, 1500);
-  };
+  const runOpts = { agent, provider, model, locale, mode, autoApply };
 
-  const runSession = async () => {
-    setRunning(true);
+  const handleRunSession = async () => {
     try {
-      const result = await api.governSession(agent, session.id, {
-        provider,
-        model,
-        locale,
-        force: true,
-        mode,
-        autoApply,
-      });
-      setPipeline(result);
-      startPolling(result.pipelineId);
+      await runSession(session.id, runOpts);
     } catch (e) {
       alert(String(e));
       setRunning(false);
     }
   };
 
-  const runProject = async () => {
-    setRunning(true);
+  const handleRunProject = async () => {
     try {
-      const result = await api.governProject(agent, session.project, {
-        provider,
-        model,
-        locale,
-        force: true,
-        mode,
-        autoApply,
-      });
-      setPipeline(result);
-      startPolling(result.pipelineId);
+      await runProject(session.project, runOpts);
     } catch (e) {
       alert(String(e));
       setRunning(false);
     }
   };
 
-  const stopPipeline = async () => {
-    if (!pipeline?.pipelineId) return;
-    try {
-      const result = await api.cancelGovernancePipeline(pipeline.pipelineId);
-      if (result) setPipeline(result);
-      setRunning(false);
-    } catch (e) {
-      alert(String(e));
-    }
-  };
-
-  const resumePipeline = async () => {
-    if (!pipeline?.pipelineId) return;
-    setRunning(true);
-    try {
-      const result = await api.resumeGovernancePipeline(pipeline.pipelineId);
-      if (result) {
-        setPipeline(result);
-        startPolling(result.pipelineId);
-      }
-    } catch (e) {
-      alert(String(e));
-      setRunning(false);
-    }
-  };
-
-  const exportPlaybook = async () => {
+  const handleExport = async () => {
     setRunning(true);
     try {
       const md = await api.fetchPlaybook(agent, session.project, { save: true, refresh: true });
-      setPipeline((prev) => ({ ...(prev ?? { pipelineId: "", scope: "project", steps: [] }), playbookMarkdown: md }));
+      setPipeline((prev) => ({
+        ...(prev ?? { pipelineId: "", scope: "project", steps: [] }),
+        playbookMarkdown: md,
+      }));
     } catch (e) {
       alert(String(e));
     } finally {
@@ -210,67 +137,93 @@ export function GovernancePanel({ agent, session, locale = "en" }: Props) {
     }
   };
 
-  if (loading) return <div className="loading">{L.loadContext}</div>;
-
-  const progress = pipeline ? pipelineProgress(pipeline.steps) : 0;
+  if (loading) return <PanelLoadingSkeleton label={L.loadContext} />;
 
   return (
-    <div className="panel governance-panel">
-      <header className="governance-header">
+    <div className="panel governance-panel workspace-panel">
+      <header className="workspace-panel-header">
         <h2 className="card-title">
           <Shield size={18} /> {L.title}
         </h2>
-        <div className="governance-controls">
-          <label className="governance-mode">
-            {L.mode}
-            <select value={mode} onChange={(e) => setMode(e.target.value as GovernancePipelineMode)} disabled={running}>
-              <option value="quick">{L.quick}</option>
-              <option value="standard">{L.standard}</option>
-              <option value="full">{L.full}</option>
-            </select>
-          </label>
-          <label className="checkbox-inline">
-            <input type="checkbox" checked={autoApply} onChange={(e) => setAutoApply(e.target.checked)} disabled={running} />
-            Auto-apply high confidence
-          </label>
-        </div>
-        <div className="governance-actions">
-          <ActionButton onClick={runSession} disabled={running} icon={Play}>
-            {running ? L.running : L.runSession}
-          </ActionButton>
-          <ActionButton onClick={runProject} disabled={running} variant="secondary" icon={RefreshCw}>
-            {L.runProject}
-          </ActionButton>
-          {running && pipeline && (
-            <ActionButton onClick={stopPipeline} variant="secondary" icon={Square}>
-              {L.stop}
-            </ActionButton>
-          )}
-          {!running && pipeline?.status === "cancelled" && (
-            <ActionButton onClick={resumePipeline} variant="secondary" icon={RotateCcw}>
-              {L.resume}
-            </ActionButton>
-          )}
-          <ActionButton onClick={exportPlaybook} disabled={running} variant="secondary" icon={Download}>
-            {L.exportPlaybook}
-          </ActionButton>
-        </div>
       </header>
 
+      {pipeline && (
+        <PipelineWorkflowPanel
+          agent={agent}
+          sessionId={session.id}
+          projectRoot={context?.projectRoot}
+          pipeline={pipeline}
+          running={running}
+          locale={locale}
+        />
+      )}
+
+      {running && !pipeline && (
+        <section className="card pipeline-workflow-card">
+          <div className="pipeline-active-banner is-running">
+            <div className="pipeline-active-head">
+              <div className="pipeline-active-title">
+                <span className="improvement-loading-spinner" aria-hidden />
+                <span>{locale === "ar" ? "جاري بدء Pipeline…" : "Starting pipeline…"}</span>
+              </div>
+            </div>
+            <div className="analysis-skeleton compact">
+              <div className="skeleton-line wide" />
+              <div className="skeleton-line" />
+            </div>
+          </div>
+        </section>
+      )}
+
+      <GovernanceRunControls
+        locale={locale}
+        mode={mode}
+        autoApply={autoApply}
+        running={running}
+        pipeline={pipeline}
+        provider={provider}
+        model={model}
+        providers={llmProviders}
+        onProviderChange={setProvider}
+        onModelChange={setModel}
+        onModeChange={setMode}
+        onAutoApplyChange={setAutoApply}
+        onRunSession={handleRunSession}
+        onRunProject={handleRunProject}
+        onStop={() => void stopPipeline().catch((e) => alert(String(e)))}
+        onResume={() => void resumePipeline().catch((e) => alert(String(e)))}
+        onExport={() => void handleExport()}
+      />
+
+      <GovernanceHistoryPanel
+        agent={agent}
+        projectSlug={session.project}
+        projectRoot={context?.projectRoot}
+        locale={locale}
+        activePipelineId={pipeline?.pipelineId}
+        refreshKey={historyRefresh}
+      />
+
       {context && (
-        <section className="governance-section">
-          <p className="panel-hint">
-            <strong>{L.projectRoot}:</strong> {context.projectRoot}{" "}
+        <section className="card context-card">
+          <div className="context-card-head">
+            <h3 className="card-title">
+              <FolderOpen size={16} /> {L.context}
+            </h3>
             <span className={context.verified ? "badge-ok" : "badge-warn"}>
               {context.verified ? L.verified : L.unverified}
             </span>
-            {context.warning ? ` — ${context.warning}` : ""}
+          </div>
+          <p className="panel-hint context-path">
+            <strong>{L.projectRoot}:</strong> {context.projectRoot}
           </p>
+          {context.warning && <p className="panel-hint notice-inline">{context.warning}</p>}
           <p className="panel-hint">
-            {context.files.length} {L.filesLoaded} (hash {context.inventoryHash})
+            {context.files.length} {L.filesLoaded}
+            <span className="context-hash"> · {context.inventoryHash}</span>
             {context.files.length > 0 && (
               <button type="button" className="link-btn" onClick={() => setShowFiles((v) => !v)}>
-                {L.expandContext}
+                {showFiles ? L.collapseContext : L.expandContext}
               </button>
             )}
           </p>
@@ -278,7 +231,8 @@ export function GovernancePanel({ agent, session, locale = "en" }: Props) {
             <ul className="context-file-list">
               {context.files.map((f) => (
                 <li key={f.relativePath}>
-                  <code>{f.relativePath}</code> — {f.sizeBytes} bytes
+                  <code>{f.relativePath}</code>
+                  <span>{f.sizeBytes.toLocaleString()} bytes</span>
                 </li>
               ))}
             </ul>
@@ -286,71 +240,14 @@ export function GovernancePanel({ agent, session, locale = "en" }: Props) {
         </section>
       )}
 
-      {pipeline && running && (
-        <section className="governance-section">
-          <div className="pipeline-progress-label">
-            {L.progress}: {progress}%
-          </div>
-          <div className="pipeline-progress-bar">
-            <div className="pipeline-progress-fill" style={{ width: `${progress}%` }} />
-          </div>
-        </section>
-      )}
-
-      <section className="governance-section">
-        <h3 className="card-title">{L.patterns}</h3>
-        {patterns.length === 0 ? (
-          <div className="empty-panel">{L.noPatterns}</div>
-        ) : (
-          <div className="pattern-list">
-            {patterns.slice(0, 8).map((p) => (
-              <div key={p.id} className="pattern-card">
-                <div className="pattern-header">
-                  <strong>{p.label}</strong>
-                  <span className="pattern-count">×{p.count}</span>
-                </div>
-                <p className="pattern-desc">{p.description}</p>
-                <p className="pattern-rec">{p.recommendation}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {pipeline && (
-        <>
-          <section className="governance-section">
-            <h3 className="card-title">{L.pipeline}</h3>
-            <ul className="pipeline-steps">
-              {pipeline.steps.map((s) => (
-                <li key={s.type} className={`pipeline-step pipeline-${s.status}`}>
-                  <code>{s.type}</code> — {s.status}
-                  {s.error ? `: ${s.error}` : ""}
-                </li>
-              ))}
-            </ul>
-            {pipeline.applyResults && pipeline.applyResults.length > 0 && (
-              <p className="panel-hint">
-                Auto-applied {pipeline.applyResults.filter((r) => r.ok).length}/{pipeline.applyResults.length} files
-              </p>
-            )}
-          </section>
-          {pipeline.playbookMarkdown && (
-            <section className="governance-section">
-              <div className="governance-playbook-head">
-                <h3 className="card-title">{L.playbook}</h3>
-                <ActionButton
-                  variant="secondary"
-                  onClick={() => copyText(pipeline.playbookMarkdown ?? "")}
-                >
-                  {L.copyPlaybook}
-                </ActionButton>
-              </div>
-              <pre className="governance-playbook">{pipeline.playbookMarkdown}</pre>
-            </section>
-          )}
-        </>
-      )}
+      <PatternGrid
+        patterns={patterns}
+        title={L.patterns}
+        emptyMessage={L.noPatterns}
+        showSessions
+        agent={agent}
+        locale={locale}
+      />
     </div>
   );
 }

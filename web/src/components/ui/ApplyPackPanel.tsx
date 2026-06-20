@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Download, Package } from "lucide-react";
 import { api } from "../../api";
 import { type ApplyPackItem } from "../../lib/apply-pack";
@@ -43,6 +43,11 @@ export function ApplyPackPanel({ items: initialItems, projectRoot, locale = "en"
   const [items, setItems] = useState(initialItems);
   const [applying, setApplying] = useState(false);
   const [results, setResults] = useState<Record<string, "ok" | "err">>({});
+
+  useEffect(() => {
+    setItems(initialItems);
+    setResults({});
+  }, [initialItems]);
 
   const selectedCount = useMemo(() => items.filter((i) => i.selected).length, [items]);
 

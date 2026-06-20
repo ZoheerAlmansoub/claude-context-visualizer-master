@@ -1,14 +1,22 @@
 import { useEffect, useState } from "react";
-import { LayoutDashboard, Play, RefreshCw } from "lucide-react";
+import { LayoutDashboard, RefreshCw } from "lucide-react";
 import {
   api,
   type AgentKind,
   type GovernancePipelineMode,
+  type LlmProviderKind,
   type ProjectContextSummary,
   type RecurringPattern,
   type SessionListItem,
 } from "../api";
+import { useGovernancePipeline } from "../context/GovernancePipelineContext";
 import { ActionButton } from "./ui/ActionButton";
+import { GovernanceRunControls } from "./ui/GovernanceRunControls";
+import { PanelLoadingSkeleton } from "./ui/PanelLoadingSkeleton";
+import { PatternGrid } from "./ui/PatternGrid";
+import { PipelineWorkflowPanel } from "./ui/PipelineWorkflowPanel";
+import { ProjectMetricsHero } from "./ui/ProjectMetricsHero";
+import { GovernanceHistoryPanel } from "./ui/GovernanceHistoryPanel";
 
 type Props = {
   agent: AgentKind;
@@ -25,12 +33,51 @@ type DashboardData = {
   eligibility: { eligible: boolean; newSessions: number; reason: string };
 };
 
+const LABELS = {
+  en: {
+    title: "Project dashboard",
+    loading: "Loading project dashboard…",
+    sessions: "Sessions",
+    memoryFiles: "Memory files",
+    patterns: "Cross-session patterns",
+    newSessions: "New since govern",
+    noPatterns: "No cross-session patterns yet.",
+    topPatterns: "Top patterns",
+    recentSessions: "Recent sessions",
+    eligible: "new session(s) — project governance recommended",
+    lastGovern: "Last governance",
+    refresh: "Refresh",
+    compacted: "compacted",
+  },
+  ar: {
+    title: "لوحة المشروع",
+    loading: "جاري تحميل لوحة المشروع…",
+    sessions: "الجلسات",
+    memoryFiles: "ملفات الذاكرة",
+    patterns: "أنماط cross-session",
+    newSessions: "جلسات جديدة",
+    noPatterns: "لا توجد أنماط cross-session بعد.",
+    topPatterns: "أهم الأنماط",
+    recentSessions: "آخر الجلسات",
+    eligible: "جلسة جديدة — يُنصح بتشغيل حوكمة المشروع",
+    lastGovern: "آخر حوكمة",
+    refresh: "تحديث",
+    compacted: "مضغوطة",
+  },
+} as const;
+
 export function ProjectDashboard({ agent, session, locale = "en", onSelectSession }: Props) {
+  const L = LABELS[locale];
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [provider, setProvider] = useState<LlmProviderKind>("openrouter");
+  const [model, setModel] = useState("");
+  const [llmProviders, setLlmProviders] = useState<Array<{ id: LlmProviderKind; label: string; configured: boolean }>>([]);
   const [mode, setMode] = useState<GovernancePipelineMode>("standard");
   const [autoApply, setAutoApply] = useState(false);
-  const [running, setRunning] = useState(false);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+
+  const { pipeline, running, setRunning, runProject, stopPipeline, resumePipeline } = useGovernancePipeline();
 
   const load = () => {
     setLoading(true);
@@ -43,115 +90,150 @@ export function ProjectDashboard({ agent, session, locale = "en", onSelectSessio
 
   useEffect(load, [agent, session.project, session.projectPath]);
 
+  useEffect(() => {
+    api.llmConfig().then((cfg) => {
+      setProvider(cfg.defaultProvider);
+      setModel(cfg.defaultModel);
+      setLlmProviders(cfg.providers);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!pipeline?.status || pipeline.status === "running") return;
+    setHistoryRefresh((n) => n + 1);
+  }, [pipeline?.status, pipeline?.pipelineId]);
+
   const govern = async () => {
-    setRunning(true);
     try {
-      await api.governProject(agent, session.project, { mode, autoApply, force: true, locale });
+      await runProject(session.project, {
+        agent,
+        provider,
+        model,
+        locale,
+        mode,
+        autoApply,
+      });
       load();
     } catch (e) {
       alert(String(e));
-    } finally {
       setRunning(false);
     }
   };
 
-  if (loading || !data) return <div className="loading">Loading project dashboard…</div>;
-
-  const L = locale === "ar";
+  if (loading || !data) return <PanelLoadingSkeleton label={L.loading} />;
 
   return (
-    <div className="panel project-dashboard">
-      <header className="dashboard-header">
+    <div className="panel project-dashboard workspace-panel">
+      <header className="workspace-panel-header workspace-panel-header-row">
         <h2 className="card-title">
-          <LayoutDashboard size={18} /> {L ? "لوحة المشروع" : "Project dashboard"}
+          <LayoutDashboard size={18} /> {L.title}
         </h2>
-        <p className="panel-hint">
-          <strong>{data.context.projectRoot}</strong>{" "}
-          <span className={data.context.verified ? "badge-ok" : "badge-warn"}>
-            {data.context.verified ? (L ? "موثّق" : "Verified") : L ? "غير موثّق" : "Unverified"}
-          </span>
-        </p>
+        <ActionButton variant="ghost" icon={RefreshCw} onClick={load} disabled={running}>
+          {L.refresh}
+        </ActionButton>
       </header>
 
-      <section className="dashboard-stats">
-        <div className="stat-card">
-          <div className="label">{L ? "الجلسات" : "Sessions"}</div>
-          <div className="value">{data.sessions.length}+</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">{L ? "ملفات الذاكرة" : "Memory files"}</div>
-          <div className="value">{data.context.files.length}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">{L ? "أنماط cross-session" : "Cross-session patterns"}</div>
-          <div className="value">{data.patterns.length}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">{L ? "جلسات جديدة" : "New since govern"}</div>
-          <div className="value">{data.eligibility.newSessions}</div>
-        </div>
-      </section>
+      {pipeline && (
+        <PipelineWorkflowPanel
+          agent={agent}
+          sessionId={pipeline.sessionId ?? session.id}
+          projectRoot={data.context.projectRoot}
+          pipeline={pipeline}
+          running={running}
+          locale={locale}
+        />
+      )}
+
+      {running && !pipeline && (
+        <section className="card pipeline-workflow-card">
+          <div className="pipeline-active-banner is-running">
+            <div className="pipeline-active-head">
+              <div className="pipeline-active-title">
+                <span className="improvement-loading-spinner" aria-hidden />
+                <span>{locale === "ar" ? "جاري بدء حوكمة المشروع…" : "Starting project governance…"}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {data.eligibility.eligible && (
-        <div className="notice">
-          {L
-            ? `${data.eligibility.newSessions} جلسة جديدة — يُنصح بتشغيل حوكمة المشروع`
-            : `${data.eligibility.newSessions} new session(s) — project governance recommended`}
+        <div className="notice warning workspace-notice">
+          <span className="icon">!</span>
+          <span>
+            {data.eligibility.newSessions} {L.eligible}
+          </span>
         </div>
       )}
 
-      <section className="governance-section">
-        <div className="governance-controls">
-          <label>
-            Mode
-            <select value={mode} onChange={(e) => setMode(e.target.value as GovernancePipelineMode)}>
-              <option value="quick">Quick</option>
-              <option value="standard">Standard</option>
-              <option value="full">Full</option>
-            </select>
-          </label>
-          <label className="checkbox-inline">
-            <input type="checkbox" checked={autoApply} onChange={(e) => setAutoApply(e.target.checked)} />
-            Auto-apply high confidence
-          </label>
-        </div>
-        <div className="governance-actions">
-          <ActionButton icon={Play} onClick={govern} disabled={running}>
-            {running ? "Running…" : L ? "حوكمة المشروع" : "Govern project"}
-          </ActionButton>
-          <ActionButton variant="secondary" icon={RefreshCw} onClick={load}>
-            Refresh
-          </ActionButton>
-        </div>
-        {data.schedule.lastRunAt && (
-          <p className="panel-hint">
-            Last governance: {new Date(data.schedule.lastRunAt).toLocaleString()}
-          </p>
-        )}
-      </section>
+      <ProjectMetricsHero
+        title={data.context.projectRoot}
+        subtitle={
+          <>
+            <span className={data.context.verified ? "badge-ok" : "badge-warn"}>
+              {data.context.verified ? (locale === "ar" ? "موثّق" : "Verified") : locale === "ar" ? "غير موثّق" : "Unverified"}
+            </span>
+            {data.schedule.lastRunAt && (
+              <span className="panel-hint inline-hint">
+                {L.lastGovern}: {new Date(data.schedule.lastRunAt).toLocaleString()}
+              </span>
+            )}
+          </>
+        }
+        stats={[
+          { label: L.sessions, value: data.sessions.length, accent: true },
+          { label: L.memoryFiles, value: data.context.files.length },
+          { label: L.patterns, value: data.patterns.length },
+          {
+            label: L.newSessions,
+            value: data.eligibility.newSessions,
+            accent: data.eligibility.eligible,
+            hint: data.eligibility.eligible ? L.eligible : undefined,
+          },
+        ]}
+      />
 
-      <section className="insights-section">
-        <h3 className="card-title">{L ? "أهم الأنماط" : "Top patterns"}</h3>
-        {data.patterns.length === 0 ? (
-          <div className="empty-panel">No cross-session patterns yet.</div>
-        ) : (
-          <div className="pattern-list">
-            {data.patterns.slice(0, 6).map((p) => (
-              <div key={p.id} className="pattern-card">
-                <div className="pattern-header">
-                  <strong>{p.label}</strong>
-                  <span className="pattern-count">×{p.count}</span>
-                </div>
-                <p className="pattern-desc">{p.description}</p>
-                <p className="pattern-rec">{p.recommendation}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      <GovernanceRunControls
+        locale={locale}
+        mode={mode}
+        autoApply={autoApply}
+        running={running}
+        pipeline={pipeline}
+        provider={provider}
+        model={model}
+        providers={llmProviders}
+        onProviderChange={setProvider}
+        onModelChange={setModel}
+        showSessionAction={false}
+        showExport={false}
+        onModeChange={setMode}
+        onAutoApplyChange={setAutoApply}
+        onRunProject={govern}
+        onStop={() => void stopPipeline().catch((e) => alert(String(e)))}
+        onResume={() => void resumePipeline().catch((e) => alert(String(e)))}
+      />
 
-      <section className="insights-section">
-        <h3 className="card-title">{L ? "آخر الجلسات" : "Recent sessions"}</h3>
+      <GovernanceHistoryPanel
+        agent={agent}
+        projectSlug={session.project}
+        projectRoot={data.context.projectRoot}
+        locale={locale}
+        activePipelineId={pipeline?.pipelineId}
+        refreshKey={historyRefresh}
+      />
+
+      <PatternGrid
+        patterns={data.patterns}
+        title={L.topPatterns}
+        emptyMessage={L.noPatterns}
+        limit={6}
+        showSessions
+        agent={agent}
+        locale={locale}
+      />
+
+      <section className="card insights-card">
+        <h3 className="card-title">{L.recentSessions}</h3>
         <div className="dashboard-sessions">
           {data.sessions.map((s) => (
             <button
@@ -160,8 +242,11 @@ export function ProjectDashboard({ agent, session, locale = "en", onSelectSessio
               className="dashboard-session-row"
               onClick={() => onSelectSession?.(s.id)}
             >
-              <span>{s.title}</span>
-              {s.hasCompaction && <span className="compaction-mark">compacted</span>}
+              <span className="dashboard-session-title">{s.title}</span>
+              <span className="dashboard-session-meta">
+                {s.realTotal != null && <span>{s.realTotal.toLocaleString()} tok</span>}
+                {s.hasCompaction && <span className="compaction-mark">{L.compacted}</span>}
+              </span>
             </button>
           ))}
         </div>

@@ -305,6 +305,9 @@ export async function runAnalysis(
     analysisSource: parsed.analysisSource,
     llmUnavailable,
     parseWarning: parsed.parseWarning,
+    rawLlmResponse:
+      parsed.rawLlmResponse ??
+      (llmResult.mode !== "heuristic" ? responseText.trim() : undefined),
     tokensUsed,
     cached: false,
     provider,

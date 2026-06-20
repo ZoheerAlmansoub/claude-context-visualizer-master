@@ -23,6 +23,7 @@ import {
   getGovernancePipeline,
   cancelGovernancePipeline,
   resumeGovernancePipeline,
+  listGovernancePipelines,
 } from "./governance/pipeline.ts";
 import { getGovernanceSchedule, isGovernanceEligible } from "./governance/schedule.ts";
 import { exportPlaybookToProject } from "./governance/playbook.ts";
@@ -416,6 +417,22 @@ const server = Bun.serve({
           autoApply: body.autoApply === true || process.env.GOVERNANCE_AUTO_APPLY === "1",
         });
         return json(result);
+      }
+
+      const governanceHistoryMatch = path.match(/^\/api\/projects\/([^/]+)\/governance\/history$/);
+      if (governanceHistoryMatch && req.method === "GET") {
+        const agent = requestedAgent(url);
+        if (!agent) return badRequest("unsupported agent");
+        const projectSlug = decodeURIComponent(governanceHistoryMatch[1]!);
+        const sessionId = url.searchParams.get("sessionId") ?? undefined;
+        const limit = Number(url.searchParams.get("limit") ?? 20);
+        const items = await listGovernancePipelines({
+          agent,
+          projectSlug,
+          sessionId,
+          limit: Number.isFinite(limit) ? limit : 20,
+        });
+        return json({ items });
       }
 
       const governanceGetMatch = path.match(/^\/api\/governance\/([^/]+)$/);

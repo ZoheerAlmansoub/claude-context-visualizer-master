@@ -22,61 +22,15 @@ import type {
 } from "../types.ts";
 import { renderArtifactBodyForAgent } from "../artifacts/agent-registry.ts";
 import type { ProjectContextSnapshot } from "../project-context.ts";
-
-function stripCodeFences(raw: string): string {
-  return raw
-    .replace(/^```(?:json|markdown)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-}
-
-function repairInvalidJsonEscapes(json: string): string {
-  return json.replace(/\\([^"\\/bfnrtu0-9])/g, "$1");
-}
-
-function extractBalancedJsonObject(raw: string): string | null {
-  const start = raw.indexOf("{");
-  if (start === -1) return null;
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = start; i < raw.length; i++) {
-    const c = raw[i]!;
-    if (inString) {
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (c === "\\") {
-        escape = true;
-        continue;
-      }
-      if (c === '"') inString = false;
-      continue;
-    }
-    if (c === '"') {
-      inString = true;
-      continue;
-    }
-    if (c === "{") depth++;
-    if (c === "}") {
-      depth--;
-      if (depth === 0) return raw.slice(start, i + 1);
-    }
-  }
-  return null;
-}
+import {
+  parseJsonObjectRobust,
+  partialParseWarning,
+  salvageAnalysisObject,
+  stripCodeFences,
+} from "./json-recovery.ts";
 
 function parseJsonObject(raw: string): Record<string, unknown> {
-  const trimmed = stripCodeFences(raw.trim());
-  const candidate = extractBalancedJsonObject(trimmed) ?? trimmed;
-  const attempts = [candidate, repairInvalidJsonEscapes(candidate)];
-  for (const attempt of attempts) {
-    try {
-      return JSON.parse(attempt) as Record<string, unknown>;
-    } catch {}
-  }
-  throw new Error("Could not parse analysis JSON");
+  return parseJsonObjectRobust(raw);
 }
 
 function asConfidence(v: unknown): "high" | "medium" | "low" {
@@ -207,11 +161,21 @@ function normalizeMemoryDiffItem(raw: Record<string, unknown>): MemoryDiffItem {
   };
 }
 
-function normalizeRuleDedupItem(raw: Record<string, unknown>): RuleDedupItem {
+function normalizeRuleDedupItem(raw: Record<string, unknown>, agent: AgentKind = "cursor"): RuleDedupItem {
   const action = String(raw.action ?? "create").toLowerCase();
+  const name = String(raw.name ?? "rule").trim();
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "rule";
+  const defaultPath =
+    agent === "cursor"
+      ? `.cursor/rules/${slug}.mdc`
+      : agent === "claude"
+        ? `.claude/rules/${slug}.md`
+        : agent === "pi"
+          ? `.pi/rules/${slug}.md`
+          : `.opencode/rules/${slug}.md`;
   return {
-    name: String(raw.name ?? "rule").trim(),
-    proposedPath: String(raw.proposedPath ?? ".cursor/rules/rule.mdc").trim(),
+    name,
+    proposedPath: String(raw.proposedPath ?? defaultPath).trim(),
     existingPath: raw.existingPath ? String(raw.existingPath) : undefined,
     action:
       action === "merge" || action === "replace" || action === "skip" ? action : "create",
@@ -526,7 +490,9 @@ function buildHeuristicRuleDedup(
         ? `.cursor/rules/${slug}.mdc`
         : agent === "claude"
           ? `.claude/rules/${slug}.md`
-          : `.opencode/rules/${slug}.md`;
+          : agent === "pi"
+            ? `.pi/rules/${slug}.md`
+            : `.opencode/rules/${slug}.md`;
     const match = existingRules.find((r) => r.relativePath.includes(slug));
     return {
       name: slug,
@@ -568,7 +534,7 @@ function buildHeuristicCompactionRecovery(
         locale === "ar"
           ? "Compaction أزال سياق ما قبل الحد — لا يُعاد تلقائياً"
           : "Compaction removed pre-boundary context — it is not restored automatically",
-      suggestedMemoryPath: "AGENTS.md",
+      suggestedMemoryPath: "docs/context/compaction-recovery.md",
     },
     {
       priority: "high",
@@ -695,7 +661,7 @@ function buildHeuristicProjectSynthesis(
   };
 }
 
-function patternToRule(p: RecurringPattern): GeneratedArtifact {
+function patternToRule(p: RecurringPattern, agent: AgentKind = "cursor"): GeneratedArtifact {
   const artifact: GeneratedArtifact = {
     kind: "rule",
     name: p.label.replace(/\s+/g, "-").slice(0, 40),
@@ -705,11 +671,11 @@ function patternToRule(p: RecurringPattern): GeneratedArtifact {
     sourceTurns: [],
     confidence: p.count >= 4 ? "high" : p.count >= 2 ? "medium" : "low",
   };
-  artifact.rendered = renderArtifactBodyForAgent("cursor", artifact);
+  artifact.rendered = renderArtifactBodyForAgent(agent, artifact);
   return artifact;
 }
 
-function patternToToolHint(p: RecurringPattern): GeneratedArtifact {
+function patternToToolHint(p: RecurringPattern, agent: AgentKind = "cursor"): GeneratedArtifact {
   const toolName = p.id.includes(":") ? p.id.split(":")[1] ?? p.label : p.label;
   const artifact: GeneratedArtifact = {
     kind: "tool-hint",
@@ -720,7 +686,7 @@ function patternToToolHint(p: RecurringPattern): GeneratedArtifact {
     sourceTurns: [],
     confidence: p.count >= 3 ? "high" : "medium",
   };
-  artifact.rendered = renderArtifactBodyForAgent("cursor", artifact);
+  artifact.rendered = renderArtifactBodyForAgent(agent, artifact);
   return artifact;
 }
 
@@ -887,7 +853,7 @@ function supplementFromPatterns(
       .filter((p) =>
         ["retry_loop", "repeated_tool_error", "bash_failure_loop", "duplicate_user_intent"].includes(p.kind),
       )
-      .map(patternToRule);
+      .map((p) => patternToRule(p, opts.agent ?? "cursor"));
     if (!heuristicRules.length && structured) return structured;
     const base =
       structured?.kind === "prevention-rules"
@@ -903,7 +869,7 @@ function supplementFromPatterns(
   if (type === "tool-hardening") {
     const heuristicHints = patterns
       .filter((p) => p.kind === "repeated_tool_error" || p.kind === "bash_failure_loop")
-      .map(patternToToolHint);
+      .map((p) => patternToToolHint(p, opts.agent ?? "cursor"));
     if (!heuristicHints.length && structured) return structured;
     const base =
       structured?.kind === "artifacts" ? structured : { kind: "artifacts" as const, summary: "", items: [] };
@@ -990,7 +956,61 @@ export type ParsedAnalysis = {
   markdown: string;
   analysisSource?: AnalysisSource;
   parseWarning?: string;
+  rawLlmResponse?: string;
 };
+
+function tryRecoverFromSalvage(
+  type: string,
+  raw: string,
+  locale: "ar" | "en",
+  patterns: RecurringPattern[],
+  opts: ParseAnalysisOptions,
+): ParsedAnalysis | null {
+  const salvaged = salvageAnalysisObject(type, raw);
+  if (!salvaged) return null;
+  try {
+    const reparsed = parseAnalysisResponse(type, JSON.stringify(salvaged), locale, patterns, opts);
+    if (!reparsed.structured || isStructuredEmpty(reparsed.structured)) return null;
+    return {
+      ...reparsed,
+      rawLlmResponse: raw.trim(),
+      analysisSource: reparsed.analysisSource ?? "llm",
+      parseWarning: partialParseWarning(locale),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function unstructuredFallback(
+  type: string,
+  raw: string,
+  locale: "ar" | "en",
+  patterns: RecurringPattern[],
+  opts: ParseAnalysisOptions,
+): ParsedAnalysis {
+  const recovered = tryRecoverFromSalvage(type, raw, locale, patterns, opts);
+  if (recovered) return recovered;
+
+  const structured = supplementFromPatterns(type, undefined, patterns, locale, opts);
+  if (structured && !isStructuredEmpty(structured)) {
+    return {
+      structured,
+      markdown: formatStructuredAnalysisMarkdown(structured, locale),
+      analysisSource: "heuristic",
+      rawLlmResponse: raw.trim(),
+    };
+  }
+
+  return {
+    markdown: raw.trim(),
+    rawLlmResponse: raw.trim(),
+    parseWarning:
+      locale === "ar"
+        ? "تعذّر تحليل استجابة النموذج ولم تُكتشف أنماط كافية. الاستجابة الكاملة معروضة أدناه — أعد التحليل أو جرّب مزوداً آخر."
+        : "Could not parse the model response and no session patterns were found. Full response shown below — re-run analysis or try another provider.",
+  };
+}
 
 export function parseAnalysisResponse(
   type: string,
@@ -1184,7 +1204,9 @@ export function parseAnalysisResponse(
           kind: "rule-dedup",
           summary: String(parsed.summary ?? "").trim(),
           items: Array.isArray(parsed.items)
-            ? (parsed.items as Record<string, unknown>[]).map(normalizeRuleDedupItem)
+            ? (parsed.items as Record<string, unknown>[]).map((r) =>
+                normalizeRuleDedupItem(r, agent),
+              )
             : [],
         };
         break;
@@ -1265,29 +1287,21 @@ export function parseAnalysisResponse(
         return { markdown: raw.trim() };
     }
   } catch {
-    structured = supplementFromPatterns(type, undefined, patterns, locale, opts);
-    if (structured && !isStructuredEmpty(structured)) {
-      return {
-        structured,
-        markdown: formatStructuredAnalysisMarkdown(structured, locale),
-        analysisSource: "heuristic",
-      };
-    }
-    parseWarning =
-      locale === "ar"
-        ? "تعذّر تحليل استجابة النموذج ولم تُكتشف أنماط كافية. أعد التحليل أو جرّب مزوداً آخر."
-        : "Could not parse the model response and no session patterns were found. Re-run analysis or try another provider.";
-    return { markdown: raw.trim(), parseWarning };
+    return unstructuredFallback(type, raw, locale, patterns, opts);
   }
 
   const llmStructured = structured;
   structured = supplementFromPatterns(type, structured, patterns, locale, opts);
 
   if (isStructuredEmpty(structured)) {
+    const recovered = tryRecoverFromSalvage(type, raw, locale, patterns, opts);
+    if (recovered?.structured && !isStructuredEmpty(recovered.structured)) {
+      return recovered;
+    }
     parseWarning =
       locale === "ar"
-        ? "التحليل لم يُنتج عناصر قابلة للاستخدام. أعد التشغيل بـ force أو راجع الجلسة."
-        : "Analysis produced no actionable items. Re-run with New analysis or review session data.";
+        ? "التحليل لم يُنتج عناصر قابلة للاستخدام. أعد التشغيل بـ force أو راجع الجلسة. الاستجابة الكاملة معروضة أدناه."
+        : "Analysis produced no actionable items. Re-run with New analysis or review session data. Full response shown below.";
   }
 
   if (structured) {
@@ -1296,8 +1310,9 @@ export function parseAnalysisResponse(
       markdown: formatStructuredAnalysisMarkdown(structured, locale),
       analysisSource: resolveAnalysisSource(llmStructured, structured, patterns),
       parseWarning,
+      rawLlmResponse: raw.trim(),
     };
   }
 
-  return { markdown: raw.trim(), parseWarning };
+  return { ...unstructuredFallback(type, raw, locale, patterns, opts), parseWarning };
 }

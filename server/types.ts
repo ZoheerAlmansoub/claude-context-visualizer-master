@@ -270,6 +270,7 @@ export type AnalyzeResult = {
   /** Set when LLM could not run (e.g. gateway timeout) but heuristic data was returned */
   llmUnavailable?: "timeout";
   parseWarning?: string;
+  rawLlmResponse?: string;
   tokensUsed?: number;
   cached: boolean;
   provider: LlmProviderKind;
@@ -361,7 +362,9 @@ export type GovernancePipelineResult = {
   cancelled?: boolean;
   steps: GovernancePipelineStep[];
   playbookMarkdown?: string;
+  summaryMarkdown?: string;
   projectRoot?: string;
+  createdAt?: string;
   updatedAt?: string;
   agent?: AgentKind;
   sessionId?: string;
@@ -371,6 +374,23 @@ export type GovernancePipelineResult = {
   locale?: "ar" | "en";
   autoApply?: boolean;
   applyResults?: Array<{ path: string; ok: boolean; error?: string }>;
+};
+
+export type GovernancePipelineListItem = {
+  pipelineId: string;
+  scope: "session" | "project";
+  mode?: GovernancePipelineMode;
+  status?: GovernancePipelineStatus;
+  createdAt?: string;
+  updatedAt?: string;
+  sessionId?: string;
+  projectSlug?: string;
+  stepsDone: number;
+  stepsTotal: number;
+  stepsFailed: number;
+  hasPlaybook: boolean;
+  hasSummary: boolean;
+  autoApply?: boolean;
 };
 
 export type ProjectInfo = {

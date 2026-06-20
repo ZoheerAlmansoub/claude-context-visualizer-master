@@ -1,5 +1,13 @@
-import type { AnalyzeResult, AnalyzeType, GeneratedArtifact, RuleDedupItem, StructuredAnalysis } from "../types.ts";
+import type { AnalyzeResult, AnalyzeType, GeneratedArtifact, RuleDedupItem, StructuredAnalysis, SubAgentSpec } from "../types.ts";
 import type { AgentKind } from "../types.ts";
+import {
+  artifactApplyPath,
+  disambiguateApplyPaths,
+  memoryApplyPath,
+  recoveryApplyPath,
+  resolveArtifactApplyPath,
+  ruleDedupApplyPath,
+} from "./apply-paths.ts";
 
 export type ApplyPackItem = {
   path: string;
@@ -10,35 +18,36 @@ export type ApplyPackItem = {
   label?: string;
 };
 
-function defaultArtifactPath(artifact: GeneratedArtifact, agent: AgentKind): string {
-  const slug = artifact.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  switch (artifact.kind) {
-    case "skill":
-      if (agent === "claude") return `.claude/skills/${slug}/SKILL.md`;
-      if (agent === "pi") return `.pi/skills/${slug}/SKILL.md`;
-      if (agent === "opencode") return `.opencode/skills/${slug}/SKILL.md`;
-      return `~/.cursor/skills/${slug}/SKILL.md`;
-    case "rule":
-      if (agent === "claude") return `.claude/rules/${slug}.md`;
-      if (agent === "opencode") return `.opencode/rules/${slug}.md`;
-      if (agent === "pi") return `AGENTS.md`;
-      return `.cursor/rules/${slug}.mdc`;
-    case "hook":
-      if (agent === "claude") return `.claude/hooks/${slug}.md`;
-      return `.cursor/hooks/${slug}.md`;
-    case "subagent":
-      if (agent === "cursor") return `.cursor/agents/${slug}.md`;
-      return `docs/agents/${slug}.md`;
-    default:
-      return `docs/agent-hints/${slug}.md`;
-  }
-}
-
 function mapRuleAction(action: RuleDedupItem["action"]): ApplyPackItem["action"] | null {
   if (action === "skip") return null;
   if (action === "merge") return "append";
   if (action === "replace") return "update";
   return "create";
+}
+
+function subAgentSpecToArtifact(spec: SubAgentSpec): GeneratedArtifact {
+  const toolsBlock = spec.tools.length
+    ? `## Tools\n${spec.tools.map((t) => `- ${t}`).join("\n")}`
+    : "";
+  const content = [
+    `## Role\n${spec.role}`,
+    `## When to use\n${spec.whenToUse}`,
+    `## Context budget\n${spec.contextBudget}`,
+    `## Handoff points\n${spec.handoffPoints}`,
+    toolsBlock,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return {
+    kind: "subagent",
+    name: spec.name,
+    description: spec.role,
+    trigger: spec.whenToUse,
+    content,
+    sourceTurns: [],
+    confidence: spec.confidence,
+  };
 }
 
 export function collectApplyPackFromStructured(
@@ -47,30 +56,30 @@ export function collectApplyPackFromStructured(
 ): ApplyPackItem[] {
   const items: ApplyPackItem[] = [];
 
-  const pushArtifacts = (artifacts: GeneratedArtifact[]) => {
+  const pushArtifacts = (artifacts: GeneratedArtifact[], prefix: string) => {
     for (const a of artifacts) {
       items.push({
-        path: defaultArtifactPath(a, agent),
+        path: resolveArtifactApplyPath(agent, a),
         content: a.rendered ?? a.content,
         action: "create",
         selected: a.confidence !== "low",
         confidence: a.confidence,
-        label: `${a.kind}: ${a.name}`,
+        label: `${prefix}${a.kind}: ${a.name}`,
       });
     }
   };
 
   switch (structured.kind) {
     case "prevention-rules":
-      pushArtifacts(structured.rules);
+      pushArtifacts(structured.rules, "");
       break;
     case "artifacts":
-      pushArtifacts(structured.items);
+      pushArtifacts(structured.items, "");
       break;
     case "memory-files":
       for (const f of structured.files) {
         items.push({
-          path: f.path,
+          path: memoryApplyPath(agent, f.path, f.purpose),
           content: f.content,
           action: f.action === "create" ? undefined : f.action,
           selected: true,
@@ -82,7 +91,7 @@ export function collectApplyPackFromStructured(
       for (const item of structured.items) {
         if (item.action === "skip") continue;
         items.push({
-          path: item.path,
+          path: memoryApplyPath(agent, item.path),
           content: item.diffPreview,
           action: item.action === "append" ? "append" : item.action === "update" ? "update" : "create",
           selected: true,
@@ -95,7 +104,7 @@ export function collectApplyPackFromStructured(
         const action = mapRuleAction(item.action);
         if (!action) continue;
         items.push({
-          path: item.proposedPath,
+          path: ruleDedupApplyPath(agent, item),
           content: item.content,
           action,
           selected: item.action !== "skip",
@@ -107,7 +116,7 @@ export function collectApplyPackFromStructured(
       for (const item of structured.recoveryItems) {
         if (!item.suggestedMemoryPath || !item.suggestedContent) continue;
         items.push({
-          path: item.suggestedMemoryPath,
+          path: recoveryApplyPath(agent, item.suggestedMemoryPath, item.action),
           content: item.suggestedContent,
           action: "append",
           selected: item.priority === "critical" || item.priority === "high",
@@ -116,11 +125,24 @@ export function collectApplyPackFromStructured(
         });
       }
       break;
+    case "orchestration":
+      for (const spec of structured.agents) {
+        const artifact = subAgentSpecToArtifact(spec);
+        items.push({
+          path: resolveArtifactApplyPath(agent, artifact),
+          content: artifact.content,
+          action: "create",
+          selected: spec.confidence !== "low",
+          confidence: spec.confidence,
+          label: `subagent: ${spec.name}`,
+        });
+      }
+      break;
     default:
       break;
   }
 
-  return items;
+  return disambiguateApplyPaths(items);
 }
 
 export function collectApplyPackFromAnalysis(result: AnalyzeResult, agent: AgentKind): ApplyPackItem[] {
@@ -139,7 +161,10 @@ export const AUTO_APPLY_ANALYSIS_TYPES = new Set<AnalyzeType>([
   "loop-diagnosis",
   "tool-hardening",
   "artifact-blueprint",
+  "agent-orchestration",
   "memory-diff",
   "rule-dedup",
   "compaction-recovery",
 ]);
+
+export { artifactApplyPath, ruleDedupApplyPath, resolveArtifactApplyPath };

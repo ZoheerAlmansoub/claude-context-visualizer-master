@@ -61,6 +61,7 @@ const LABELS = {
     tools: "Tools",
     copyAll: "Copy full report",
     parseWarning: "Parse notice",
+    fullModelResponse: "Full model response",
     emptyStructured: "No structured items returned.",
     sourceHeuristicTitle: "Pattern-based analysis",
     sourceHeuristicBody:
@@ -70,6 +71,7 @@ const LABELS = {
     sourceHybridTitle: "Combined analysis",
     sourceHybridBody: "LLM insights merged with patterns detected in the session.",
     appendNote: "append/update: verify existing file before saving (overwrite).",
+    keyDecisions: "Key decisions",
   },
   ar: {
     summary: "الملخص",
@@ -94,6 +96,7 @@ const LABELS = {
     tools: "الأدوات",
     copyAll: "نسخ التقرير كاملاً",
     parseWarning: "تنبيه التحليل",
+    fullModelResponse: "استجابة النموذج الكاملة",
     emptyStructured: "لم تُرجع عناصر منظّمة.",
     sourceHeuristicTitle: "تحليل من الأنماط المكتشفة",
     sourceHeuristicBody:
@@ -103,6 +106,7 @@ const LABELS = {
     sourceHybridTitle: "تحليل مُدمج",
     sourceHybridBody: "نتائج النموذج مدمجة مع أنماط مكتشفة في الجلسة.",
     appendNote: "append/update: تحقق من الملف الحالي قبل الحفظ (يستبدل المحتوى).",
+    keyDecisions: "قرارات رئيسية",
   },
 } as const;
 
@@ -146,29 +150,7 @@ function WasteTable({ items, L }: { items: TokenWasteItem[]; L: LabelSet }) {
   );
 }
 
-function defaultArtifactPath(artifact: GeneratedArtifact, agent: AgentKind = "cursor"): string {
-  const slug = artifact.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  switch (artifact.kind) {
-    case "skill":
-      if (agent === "claude") return `.claude/skills/${slug}/SKILL.md`;
-      if (agent === "pi") return `.pi/skills/${slug}/SKILL.md`;
-      if (agent === "opencode") return `.opencode/skills/${slug}/SKILL.md`;
-      return `~/.cursor/skills/${slug}/SKILL.md`;
-    case "rule":
-      if (agent === "claude") return `.claude/rules/${slug}.md`;
-      if (agent === "opencode") return `.opencode/rules/${slug}.md`;
-      if (agent === "pi") return `AGENTS.md`;
-      return `.cursor/rules/${slug}.mdc`;
-    case "hook":
-      if (agent === "claude") return `.claude/hooks/${slug}.md`;
-      return `.cursor/hooks/${slug}.md`;
-    case "subagent":
-      if (agent === "cursor") return `.cursor/agents/${slug}.md`;
-      return `docs/agents/${slug}.md`;
-    default:
-      return "";
-  }
-}
+import { artifactApplyPath } from "../../lib/artifact-paths";
 
 function ArtifactCard({
   artifact,
@@ -188,7 +170,7 @@ function ArtifactCard({
   projectRoot?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [savePath, setSavePath] = useState(defaultArtifactPath(artifact, agent));
+  const [savePath, setSavePath] = useState(artifactApplyPath(agent, artifact));
   const body = artifact.rendered ?? artifact.content;
 
   const save = async () => {
@@ -329,7 +311,8 @@ function SubAgentCard({
   projectRoot?: string;
 }) {
   const slug = agent.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-  const defaultPath = defaultArtifactPath(
+  const defaultPath = artifactApplyPath(
+    agentKind ?? "cursor",
     {
       kind: "subagent",
       name: agent.name,
@@ -339,7 +322,6 @@ function SubAgentCard({
       sourceTurns: [],
       confidence: agent.confidence,
     },
-    agentKind,
   );
   const [savePath, setSavePath] = useState(defaultPath);
 
@@ -693,6 +675,19 @@ function StructuredBody({
               <MarkdownView content={t.summary} />
             </section>
           ))}
+          {structured.decisions.length > 0 && (
+            <section className="analysis-section">
+              <h4>{L.keyDecisions}</h4>
+              <ul className="analysis-decision-list">
+                {structured.decisions.map((d, i) => (
+                  <li key={i}>
+                    <strong>{d.decision}</strong>
+                    {d.rationale && <> — {d.rationale}</>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           {structured.memoryGaps.map((g, i) => (
             <section key={i} className="analysis-section">
               <h4>{g.path}</h4>
@@ -742,7 +737,7 @@ function isStructuredEmpty(structured: StructuredAnalysis): boolean {
     case "mcp-tool-audit":
       return structured.findings.length === 0 && !structured.summary;
     case "project-synthesis":
-      return structured.themes.length === 0 && !structured.summary;
+      return structured.themes.length === 0 && structured.decisions.length === 0 && !structured.summary;
     default:
       return true;
   }
@@ -752,7 +747,12 @@ function inferAnalysisSource(result: AnalyzeResult): AnalysisSource | undefined 
   if (result.analysisSource) return result.analysisSource;
   if (result.llmUnavailable === "timeout") return "heuristic";
   if (!result.structured || isStructuredEmpty(result.structured)) return undefined;
-  if (result.parseWarning?.includes("Could not parse") || result.parseWarning?.includes("تعذّر تحليل")) {
+  if (
+    result.parseWarning?.includes("Could not parse") ||
+    result.parseWarning?.includes("Could not extract") ||
+    result.parseWarning?.includes("تعذّر تحليل") ||
+    result.parseWarning?.includes("تعذّر استخراج")
+  ) {
     return "heuristic";
   }
   return undefined;
@@ -793,7 +793,13 @@ export function AnalysisResultCards({ result, copiedId, onCopy, locale, agent = 
   const prefix = result.analysisId;
   const source = inferAnalysisSource(result);
   const hasStructured = result.structured && !isStructuredEmpty(result.structured);
-  const showParseWarning = result.parseWarning && !hasStructured;
+  const isRecoveryNotice =
+    !!result.parseWarning &&
+    (/auto-repaired|Partial results|Partial|إصلاح JSON|جزء من النتائج/i.test(result.parseWarning));
+  const showParseWarning = Boolean(result.parseWarning);
+  const showRawResponse =
+    !!result.rawLlmResponse?.trim() &&
+    (!hasStructured || result.rawLlmResponse.trim() !== result.markdown.trim());
 
   return (
     <div className="analysis-results">
@@ -801,10 +807,14 @@ export function AnalysisResultCards({ result, copiedId, onCopy, locale, agent = 
         <AnalysisSourceBanner source={source} llmUnavailable={result.llmUnavailable} L={L} />
       )}
       {showParseWarning && (
-        <div className="analysis-parse-warning" role="status">
+        <div
+          className={`analysis-parse-warning${hasStructured ? " analysis-parse-recovered" : ""}`}
+          role="status"
+        >
           <AlertTriangle size={14} />
           <span>
-            <strong>{L.parseWarning}:</strong> {result.parseWarning}
+            <strong>{isRecoveryNotice ? (locale === "ar" ? "استرداد تلقائي" : "Auto-recovered") : L.parseWarning}:</strong>{" "}
+            {result.parseWarning}
           </span>
         </div>
       )}
@@ -829,6 +839,12 @@ export function AnalysisResultCards({ result, copiedId, onCopy, locale, agent = 
         <div className="empty-panel compact">{L.emptyStructured}</div>
       ) : (
         <MarkdownView content={result.markdown} className="analysis-markdown-body" />
+      )}
+      {showRawResponse && (
+        <details className="analysis-raw-response">
+          <summary>{L.fullModelResponse}</summary>
+          <pre className="analysis-raw-pre">{result.rawLlmResponse}</pre>
+        </details>
       )}
       <div className="improvement-results-footer">
         <ActionButton
