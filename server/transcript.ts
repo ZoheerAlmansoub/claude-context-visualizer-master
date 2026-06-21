@@ -5,6 +5,7 @@ import type { AgentKind, SessionTranscript, UserMessageBundle } from "./types.ts
 import { formatUserMessagesMarkdown } from "./text-utils.ts";
 import { recordsToTranscript } from "./normalizers/transcript-parser.ts";
 import { loadOpenCodeRecords } from "./opencode-loader.ts";
+import { loadAntigravityRecords, parseAntigravitySessionPath } from "./antigravity-loader.ts";
 
 const MAX_TRANSCRIPT_CHARS = 2_000_000;
 
@@ -24,6 +25,12 @@ export async function computeTranscript(
 
   if (agent === "opencode") {
     const loaded = await loadOpenCodeRecords(filePath);
+    if (!loaded.ok) {
+      return emptyTranscript(agent, sessionId, filePath, loaded.reason);
+    }
+    records = loaded.records;
+  } else if (agent === "antigravity") {
+    const loaded = await loadAntigravityRecords(filePath);
     if (!loaded.ok) {
       return emptyTranscript(agent, sessionId, filePath, loaded.reason);
     }

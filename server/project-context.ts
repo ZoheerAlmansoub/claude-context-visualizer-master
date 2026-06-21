@@ -52,6 +52,7 @@ const AGENT_EXTRA_PATHS: Record<AgentKind, string[]> = {
   claude: [".claude/rules", ".claude/skills"],
   pi: [".pi/skills"],
   opencode: [".opencode/rules", ".opencode/skills"],
+  antigravity: ["GEMINI.md", ".agents/rules", ".agent/rules", ".agent/skills", ".agents/skills"],
 };
 
 function expandHome(path: string): string {
@@ -77,7 +78,7 @@ export async function resolveProjectRoot(opts: {
   cwd?: string | null;
 }): Promise<ProjectRootResolution> {
   const decodedPaths =
-    opts.agent === "cursor"
+    opts.agent === "cursor" || opts.agent === "antigravity"
       ? cursorProjectPathCandidates(opts.projectSlug)
       : [decodeProjectSlugForAgent(opts.agent, opts.projectSlug)];
   const candidates: Array<{ path: string; source: ProjectRootResolution["source"] }> = [];

@@ -1,4 +1,5 @@
 import type { AgentKind } from "./types.ts";
+import { isAntigravityBrainStepFormat } from "./antigravity-loader.ts";
 
 /** JSONL record shape after agent-specific normalization — consumed by snapshot.ts */
 export type NormalizedRecord = {
@@ -274,9 +275,119 @@ export function normalizeOpenCodeRecords(records: unknown[]): NormalizedRecord[]
   });
 }
 
+const ANTIGRAVITY_SKIP_TYPES = new Set([
+  "KNOWLEDGE_ARTIFACTS",
+  "SYSTEM_MESSAGE",
+]);
+
+const ANTIGRAVITY_USER_TYPES = new Set(["USER_INPUT"]);
+const ANTIGRAVITY_ASSISTANT_TYPES = new Set(["PLANNER_RESPONSE"]);
+
+function unwrapAntigravityArg(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  let s = value.trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    s = s.slice(1, -1);
+  }
+  return s.replace(/\\\\/g, "\\");
+}
+
+function normalizeAntigravityToolArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    out[key] = unwrapAntigravityArg(value);
+  }
+  return out;
+}
+
+export function normalizeAntigravityRecords(records: unknown[]): NormalizedRecord[] {
+  const out: NormalizedRecord[] = [];
+  const pendingToolIds: string[] = [];
+
+  for (const rec of records) {
+    const r = rec as Record<string, unknown>;
+    const stepType = String(r?.type ?? "");
+    const stepIndex = Number(r?.step_index ?? out.length);
+
+    if (stepType === "CONVERSATION_HISTORY" || stepType === "CHECKPOINT") {
+      out.push({
+        type: "system",
+        subtype: "compact_boundary",
+        compactMetadata: { preTokens: 0, postTokens: 0, trigger: "antigravity" },
+      });
+      continue;
+    }
+
+    if (ANTIGRAVITY_SKIP_TYPES.has(stepType)) continue;
+
+    if (stepType === "USER_INPUT" && typeof r.content === "string") {
+      out.push({
+        type: "user",
+        message: { content: [{ type: "text", text: r.content }] },
+      });
+      continue;
+    }
+
+    if (stepType === "PLANNER_RESPONSE") {
+      const content: unknown[] = [];
+      if (typeof r.content === "string" && r.content.trim()) {
+        content.push({ type: "text", text: r.content });
+      }
+      if (typeof r.thinking === "string" && r.thinking.trim()) {
+        content.push({ type: "thinking", thinking: r.thinking });
+      }
+      const toolCalls = Array.isArray(r.tool_calls) ? r.tool_calls : [];
+      toolCalls.forEach((tc, i) => {
+        const call = tc as Record<string, unknown>;
+        const toolId = `ag-${stepIndex}-${i}`;
+        pendingToolIds.push(toolId);
+        content.push({
+          type: "tool_use",
+          id: toolId,
+          name: call.name ?? "tool",
+          input: normalizeAntigravityToolArgs((call.args ?? {}) as Record<string, unknown>),
+        });
+      });
+      if (content.length > 0) {
+        out.push({ type: "assistant", message: { content, model: null, usage: null } });
+      }
+      continue;
+    }
+
+    // Antigravity emits tool results as many step types (VIEW_FILE, CODE_ACTION, GENERIC, …).
+    // Match sequentially to pending tool calls; skip RUNNING status (background progress).
+    if (pendingToolIds.length > 0 && !ANTIGRAVITY_USER_TYPES.has(stepType) && !ANTIGRAVITY_ASSISTANT_TYPES.has(stepType)) {
+      const status = String(r.status ?? "DONE");
+      if (status === "RUNNING") continue;
+      const toolId = pendingToolIds.shift();
+      if (!toolId) continue;
+      const resultText = typeof r.content === "string" ? r.content : JSON.stringify(r.content ?? "");
+      out.push({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: toolId,
+              content: resultText,
+              is_error: stepType === "ERROR_MESSAGE" || status === "ERROR",
+            },
+          ],
+        },
+      });
+    }
+  }
+
+  return out;
+}
+
 export function normalizeRecordsForAgent(agent: AgentKind, records: unknown[]): NormalizedRecord[] {
   if (agent === "pi") return normalizePiRecords(records);
   if (agent === "cursor") return normalizeCursorRecords(records);
   if (agent === "opencode") return normalizeOpenCodeRecords(records);
+  if (agent === "antigravity") {
+    if (isAntigravityBrainStepFormat(records)) return normalizeAntigravityRecords(records);
+    return records as NormalizedRecord[];
+  }
   return records as NormalizedRecord[];
 }

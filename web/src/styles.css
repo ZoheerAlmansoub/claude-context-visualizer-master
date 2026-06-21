@@ -122,7 +122,9 @@ button { font-family: inherit; font-size: inherit; color: inherit; cursor: point
   background: var(--accent);
 }
 .agent-switcher {
-  display: flex; gap: 2px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
   background: var(--bg-subtle);
   padding: 3px;
   border-radius: 8px;
@@ -130,14 +132,21 @@ button { font-family: inherit; font-size: inherit; color: inherit; cursor: point
   margin-bottom: 12px;
 }
 .agent-switcher button {
-  flex: 1;
-  padding: 5px 8px;
+  min-width: 0;
+  padding: 5px 6px;
   border: none;
   background: transparent;
   color: var(--text-muted);
   border-radius: 6px;
-  font-size: 11.5px;
+  font-size: 11px;
   transition: all 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 5 agents: last tab spans full width so "Antigravity" fits cleanly */
+.agent-switcher button:nth-child(5) {
+  grid-column: 1 / -1;
 }
 .agent-switcher button:hover { color: var(--text); }
 .agent-switcher button.active {

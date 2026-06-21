@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { decodeCursorProjectSlug, decodePiProjectSlug, getAgentConfig, isAgentKind } from "./paths.ts";
+import { decodeCursorProjectSlug, decodePiProjectSlug, encodeWorkspaceSlug, getAgentConfig, isAgentKind } from "./paths.ts";
 import { realTotalFromUsage } from "./usage.ts";
 import { extractUserQuery, extractTitle, stripXmlTags } from "./text-utils.ts";
-import { normalizeCursorRecords, normalizePiRecords } from "./record-normalize.ts";
+import { normalizeCursorRecords, normalizePiRecords, normalizeAntigravityRecords } from "./record-normalize.ts";
 import { recordsToTranscript } from "./normalizers/transcript-parser.ts";
 import { detectSessionPatterns } from "./insights/pattern-detector.ts";
 import type { SessionTranscript } from "./types.ts";
@@ -13,6 +13,7 @@ describe("agent registry", () => {
     expect(isAgentKind("pi")).toBe(true);
     expect(isAgentKind("cursor")).toBe(true);
     expect(isAgentKind("opencode")).toBe(true);
+    expect(isAgentKind("antigravity")).toBe(true);
     expect(isAgentKind("other")).toBe(false);
   });
 
@@ -32,6 +33,11 @@ describe("agent registry", () => {
     expect(getAgentConfig("opencode").sessionsDir).toContain("storage");
   });
 
+  test("uses Antigravity brain directory", () => {
+    expect(getAgentConfig("antigravity").sessionsDir).toContain("antigravity-ide");
+    expect(getAgentConfig("antigravity").sessionsDir).toContain("brain");
+  });
+
   test("decodes Pi project slugs to readable Windows paths", () => {
     expect(decodePiProjectSlug("--D--dev-ERP-SAP--")).toBe("D:\\dev\\ERP-SAP");
     expect(decodePiProjectSlug("--C--Users-Eng.Zoheer--")).toBe("C:\\Users\\Eng.Zoheer");
@@ -42,6 +48,10 @@ describe("agent registry", () => {
     expect(decodeCursorProjectSlug("d-dev-agent-session-intelligence")).toBe(
       "D:/dev/agent-session-intelligence",
     );
+  });
+
+  test("encodes workspace paths to slugs", () => {
+    expect(encodeWorkspaceSlug("D:\\dev\\sample-app")).toBe("d-dev-sample-app");
   });
 });
 
@@ -69,10 +79,59 @@ describe("usage totals", () => {
   });
 });
 
+describe("antigravity normalizer smoke", () => {
+  test("normalizes planner response with tool calls", () => {
+    const records = normalizeAntigravityRecords([
+      {
+        type: "USER_INPUT",
+        content: "<USER_REQUEST>Hello</USER_REQUEST>",
+        step_index: 0,
+      },
+      {
+        type: "PLANNER_RESPONSE",
+        content: "OK",
+        step_index: 1,
+        tool_calls: [{ name: "list_dir", args: { DirectoryPath: '"d:\\\\dev"' } }],
+      },
+      { type: "LIST_DIRECTORY", content: "files", step_index: 2, status: "DONE" },
+    ]);
+    expect(records.filter((r) => r.type === "user")).toHaveLength(2);
+    expect(records.filter((r) => r.type === "assistant")).toHaveLength(1);
+  });
+
+  test("links CODE_ACTION and GENERIC steps as tool results", () => {
+    const records = normalizeAntigravityRecords([
+      {
+        type: "PLANNER_RESPONSE",
+        step_index: 1,
+        tool_calls: [
+          { name: "replace_file_content", args: {} },
+          { name: "manage_task", args: {} },
+        ],
+      },
+      { type: "GENERIC", content: "running", step_index: 2, status: "RUNNING" },
+      { type: "CODE_ACTION", content: "patched", step_index: 3, status: "DONE" },
+      { type: "GENERIC", content: "task done", step_index: 4, status: "DONE" },
+    ]);
+    const toolResults = records.flatMap((r) => {
+      const content = (r.message as { content?: unknown[] } | undefined)?.content;
+      return Array.isArray(content)
+        ? content.filter((b) => (b as { type?: string }).type === "tool_result")
+        : [];
+    });
+    expect(toolResults).toHaveLength(2);
+  });
+});
+
 describe("text utils", () => {
   test("extracts user_query from Cursor messages", () => {
     const raw = "<timestamp>Thu</timestamp>\n<user_query>Hello world</user_query>";
     expect(extractUserQuery(raw)).toBe("Hello world");
+  });
+
+  test("extracts USER_REQUEST from Antigravity messages", () => {
+    const raw = "<USER_REQUEST>Build feature X</USER_REQUEST>\n<ADDITIONAL_METADATA>meta</ADDITIONAL_METADATA>";
+    expect(extractUserQuery(raw)).toBe("Build feature X");
   });
 
   test("stripXmlTags removes tags", () => {

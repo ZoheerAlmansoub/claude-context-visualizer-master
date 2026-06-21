@@ -32,6 +32,11 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
     label: "Cursor",
     sessionsDir: join(homedir(), ".cursor", "projects"),
   },
+  antigravity: {
+    id: "antigravity",
+    label: "Antigravity",
+    sessionsDir: join(homedir(), ".gemini", "antigravity-ide", "brain"),
+  },
 };
 
 export const CLAUDE_PROJECTS_DIR = AGENT_CONFIGS.claude.sessionsDir;
@@ -39,7 +44,13 @@ export const CLAUDE_PROJECTS_DIR = AGENT_CONFIGS.claude.sessionsDir;
 export const CACHE_DIR = join(here, "..", ".cache");
 
 export function isAgentKind(value: string | null | undefined): value is AgentKind {
-  return value === "claude" || value === "pi" || value === "opencode" || value === "cursor";
+  return (
+    value === "claude" ||
+    value === "pi" ||
+    value === "opencode" ||
+    value === "cursor" ||
+    value === "antigravity"
+  );
 }
 
 export function getAgentConfig(agent: AgentKind): AgentConfig {
@@ -98,9 +109,21 @@ export function decodeCursorProjectSlug(slug: string): string {
   return cursorProjectPathCandidates(slug)[0] ?? slug;
 }
 
+/** Encode a filesystem workspace path to a Cursor/Antigravity-style project slug. */
+export function encodeWorkspaceSlug(workspacePath: string): string {
+  const normalized = workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const driveMatch = normalized.match(/^([a-zA-Z]):\/(.*)$/);
+  if (driveMatch) {
+    const drive = driveMatch[1]!.toLowerCase();
+    const rest = driveMatch[2]!.replace(/\//g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+    return rest ? `${drive}-${rest}` : drive;
+  }
+  return normalized.replace(/^\//, "").replace(/\//g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "_root";
+}
+
 export function decodeProjectSlugForAgent(agent: AgentKind, slug: string): string {
   if (agent === "pi") return decodePiProjectSlug(slug);
-  if (agent === "cursor") return decodeCursorProjectSlug(slug);
+  if (agent === "cursor" || agent === "antigravity") return decodeCursorProjectSlug(slug);
   if (agent === "opencode") return slug;
   return decodeProjectSlug(slug);
 }

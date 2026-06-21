@@ -3,7 +3,7 @@ import { artifactApplyPath } from "../../shared/artifact-paths.ts";
 import { artifactApplyPath as serverArtifactApplyPath } from "../artifacts/apply-paths.ts";
 
 describe("artifact path parity", () => {
-  const agents = ["claude", "cursor", "pi", "opencode"] as const;
+  const agents = ["claude", "cursor", "pi", "opencode", "antigravity"] as const;
   const kinds = ["skill", "rule", "hook", "subagent", "tool-hint"] as const;
 
   for (const agent of agents) {
