@@ -1,0 +1,22 @@
+{
+  "models": [
+    {
+      "name": "llama3.2:latest",
+      "size": 2147483648,
+      "details": {
+        "parameter_size": "3B",
+        "quantization_level": "Q4_K_M",
+        "family": "llama"
+      }
+    },
+    {
+      "name": "nomic-embed-text:latest",
+      "size": 274440192,
+      "details": {
+        "parameter_size": "137M",
+        "quantization_level": "F16",
+        "family": "nomic-bert"
+      }
+    }
+  ]
+}

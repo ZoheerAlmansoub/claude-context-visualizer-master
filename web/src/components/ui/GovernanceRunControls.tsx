@@ -1,6 +1,8 @@
 import { Download, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
-import type { GovernancePipelineMode, GovernancePipelineResult, LlmProviderKind } from "../../api";
+import { UNCHANGED_KEY_SENTINEL, type GovernancePipelineMode, type GovernancePipelineResult, type LlmProviderKind } from "../../api";
+import { useModelCatalog } from "../../hooks/useModelCatalog";
 import { ActionButton } from "./ActionButton";
+import { ModelCatalogBrowser } from "./ModelCatalogBrowser";
 
 type Props = {
   locale?: "ar" | "en";
@@ -81,6 +83,12 @@ export function GovernanceRunControls({
   onExport,
 }: Props) {
   const L = LABELS[locale];
+  const providerMeta = providers.find((p) => p.id === provider);
+  const catalog = useModelCatalog(provider ?? "anthropic", {
+    apiKey: UNCHANGED_KEY_SENTINEL,
+    configured: providerMeta?.configured ?? provider === "ollama",
+    hasApiKey: providerMeta?.configured ?? provider === "ollama",
+  }, { autoFetch: Boolean(onModelChange && provider) });
 
   return (
     <div className="card governance-controls-card">
@@ -122,17 +130,21 @@ export function GovernanceRunControls({
             </select>
           </label>
         )}
-        {onModelChange && (
-          <label className="control-field">
-            <span className="control-label">{L.model}</span>
-            <input
-              type="text"
+        {onModelChange && provider && (
+          <div className="control-field governance-model-catalog">
+            <ModelCatalogBrowser
+              label={L.model}
               value={model}
-              onChange={(e) => onModelChange(e.target.value)}
+              onChange={onModelChange}
+              models={catalog.models}
+              loading={catalog.loading}
+              error={catalog.error}
+              canFetch={catalog.canFetch}
+              onRetry={catalog.retry}
+              locale={locale}
               disabled={running}
-              placeholder="default"
             />
-          </label>
+          </div>
         )}
       </div>
       <div className="governance-actions">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   api,
   UNCHANGED_KEY_SENTINEL,
@@ -7,6 +7,7 @@ import {
   type LlmSettingsView,
   type LlmTestResult,
 } from "../api";
+import { ProviderCatalogField } from "./ui/ProviderCatalogField";
 
 type Props = {
   onClose: () => void;
@@ -203,8 +204,11 @@ export function LlmSettings({ onClose, onSaved }: Props) {
   };
 
   const activeProvider = settings?.providers.find((p) => p.id === activeTab);
+  const defaultProviderView = settings?.providers.find((p) => p.id === defaultProvider);
   const f = forms[activeTab];
   const showBaseUrl = BASE_URL_PROVIDERS.has(activeTab);
+
+  const defaultForm = useMemo(() => forms[defaultProvider], [forms, defaultProvider]);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -248,15 +252,17 @@ export function LlmSettings({ onClose, onSaved }: Props) {
                   ))}
                 </select>
               </label>
-              <label>
-                Default model
-                <input
-                  type="text"
+              <div className="llm-catalog-field">
+                <ProviderCatalogField
+                  provider={defaultProvider}
+                  providerView={defaultProviderView}
+                  form={defaultForm}
                   value={defaultModel}
-                  onChange={(e) => setDefaultModel(e.target.value)}
-                  placeholder="Model for analysis when not specified"
+                  onChange={setDefaultModel}
+                  label="Default model"
+                  fallbackModelId={defaultProviderView?.defaultModel}
                 />
-              </label>
+              </div>
             </div>
 
             <div className="llm-tabs">
@@ -335,43 +341,40 @@ export function LlmSettings({ onClose, onSaved }: Props) {
                       placeholder="https://integrate.api.nvidia.com/v1"
                     />
                   </label>
-                  <label>
-                    Text model
-                    <input
-                      type="text"
-                      value={f.textModel || f.defaultModel}
-                      onChange={(e) =>
-                        updateForm({ textModel: e.target.value, defaultModel: e.target.value })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Vision model
-                    <input
-                      type="text"
-                      value={f.visionModel}
-                      onChange={(e) => updateForm({ visionModel: e.target.value })}
-                    />
-                  </label>
+                  <ProviderCatalogField
+                    provider="nvidia"
+                    providerView={activeProvider}
+                    form={f}
+                    value={f.textModel || f.defaultModel}
+                    onChange={(id) =>
+                      updateForm({ textModel: id, defaultModel: id })
+                    }
+                    label="Text model"
+                    fallbackModelId={activeProvider?.textModel ?? activeProvider?.defaultModel}
+                  />
+                  <ProviderCatalogField
+                    provider="nvidia"
+                    providerView={activeProvider}
+                    form={f}
+                    value={f.visionModel}
+                    onChange={(id) => updateForm({ visionModel: id })}
+                    label="Vision model"
+                    visionOnly
+                    fallbackModelId={activeProvider?.visionModel}
+                  />
                 </>
               )}
 
               {activeTab !== "nvidia" && (
-                <label>
-                  Default model
-                  <input
-                    type="text"
-                    value={f.defaultModel}
-                    onChange={(e) => updateForm({ defaultModel: e.target.value })}
-                    placeholder={
-                      activeTab === "openrouter"
-                        ? "e.g. anthropic/claude-3.5-sonnet"
-                        : activeTab === "opencode-zen"
-                          ? "e.g. deepseek-v4-flash-free"
-                          : undefined
-                    }
-                  />
-                </label>
+                <ProviderCatalogField
+                  provider={activeTab}
+                  providerView={activeProvider}
+                  form={f}
+                  value={f.defaultModel}
+                  onChange={(id) => updateForm({ defaultModel: id })}
+                  label="Default model"
+                  fallbackModelId={activeProvider?.defaultModel}
+                />
               )}
 
               {testResult && testResult.provider === activeTab && (
