@@ -13,6 +13,12 @@ import {
 import { realTotalFromUsage } from "./usage.ts";
 import { normalizeRecordsForAgent, type NormalizedRecord } from "./record-normalize.ts";
 import { isOpenCodeSessionPath, loadOpenCodeRecords, parseOpenCodeSessionPath, resolveSessionSourceMtimeMs } from "./opencode-loader.ts";
+import {
+  isAntigravitySessionPath,
+  loadAntigravityRecords,
+  parseAntigravitySessionPath,
+  resolveAntigravitySessionSourceMtimeMs,
+} from "./antigravity-loader.ts";
 
 // Leaf content and tool inputs are truncated to keep snapshot payloads bounded.
 const MAX_CONTENT_CHARS = 50_000;
@@ -312,18 +318,32 @@ export async function computeSnapshot(
 ): Promise<Snapshot> {
   let mtimeMs = knownMtimeMs;
   if (mtimeMs == null) {
-    mtimeMs = await resolveSessionSourceMtimeMs(filePath, agent);
+    if (agent === "antigravity") {
+      mtimeMs = await resolveAntigravitySessionSourceMtimeMs(filePath);
+    } else {
+      mtimeMs = await resolveSessionSourceMtimeMs(filePath, agent);
+    }
   }
   const sessionId =
     agent === "opencode" || isOpenCodeSessionPath(filePath)
       ? (parseOpenCodeSessionPath(filePath)?.sessionId ?? basename(filePath, ".json"))
-      : basename(filePath, ".jsonl");
+      : agent === "antigravity" || isAntigravitySessionPath(filePath)
+        ? (parseAntigravitySessionPath(filePath)?.sessionId ?? basename(filePath, ".jsonl"))
+        : basename(filePath, ".jsonl");
 
   let records: NormalizedRecord[];
   const warnings: string[] = [];
 
   if (agent === "opencode") {
     const loaded = await loadOpenCodeRecords(filePath);
+    if (!loaded.ok) {
+      warnings.push(loaded.reason);
+      records = [];
+    } else {
+      records = normalizeRecordsForAgent(agent, loaded.records);
+    }
+  } else if (agent === "antigravity") {
+    const loaded = await loadAntigravityRecords(filePath);
     if (!loaded.ok) {
       warnings.push(loaded.reason);
       records = [];

@@ -8,9 +8,19 @@ import { streamJSONL } from "./jsonl.ts";
 import type { AgentKind, SessionListItem, ProjectInfo } from "./types.ts";
 import { realTotalFromUsage } from "./usage.ts";
 import { extractTitle } from "./text-utils.ts";
+import { resolveSessionRealTotal } from "./session-real-total.ts";
 import { listOpenCodeProjects, listOpenCodeSessions, findOpenCodeSessionById, parseOpenCodeSessionPath } from "./opencode-loader.ts";
+import {
+  findAntigravitySessionById,
+  indexAntigravitySession,
+  listAntigravityProjects,
+  listAntigravitySessions,
+  parseAntigravitySessionPath,
+} from "./antigravity-loader.ts";
 
 const IO_CONCURRENCY = 16;
+/** Cursor/Antigravity transcripts omit usage — resolving totals runs computeSnapshot. */
+const ESTIMATE_CONCURRENCY = 2;
 
 // Map an async fn over items with bounded concurrency, preserving input order.
 // Bounded so listing a project with hundreds of sessions doesn't open hundreds
@@ -81,6 +91,7 @@ async function listCursorSessionFiles(projectDir: string): Promise<string[]> {
 
 export async function listProjects(agent: AgentKind = "claude"): Promise<ProjectInfo[]> {
   if (agent === "opencode") return listOpenCodeProjects();
+  if (agent === "antigravity") return listAntigravityProjects();
 
   const sessionsDir = getAgentConfig(agent).sessionsDir;
   const entries = await readdir(sessionsDir, { withFileTypes: true });
@@ -192,10 +203,20 @@ export async function indexSessionFile(filePath: string): Promise<{
     if (rec?.type === "compaction") {
       hasCompaction = true;
     }
+    if (rec?.type === "CONVERSATION_HISTORY") {
+      hasCompaction = true;
+    }
+    if (rec?.type === "CHECKPOINT") {
+      hasCompaction = true;
+    }
     const role = rec?.message?.role;
     const isClaudeUser = rec?.type === "user";
     const isPiUser = rec?.type === "message" && role === "user";
     const isCursorUser = rec?.role === "user";
+    const isAntigravityUser = rec?.type === "USER_INPUT";
+    if (!title && isAntigravityUser && typeof rec?.content === "string") {
+      title = titleFromRaw(rec.content);
+    }
     if (!title && (isClaudeUser || isPiUser || isCursorUser) && rec?.message?.content) {
       const c = rec.message.content;
       let raw = "";
@@ -248,13 +269,47 @@ export async function indexSessionFile(filePath: string): Promise<{
   };
 }
 
+async function buildSessionListItem(
+  agent: AgentKind,
+  projectSlug: string,
+  filePath: string,
+  mtimeMs: number,
+  meta: Awaited<ReturnType<typeof indexSessionFile>>,
+): Promise<SessionListItem> {
+  const realTotal = await resolveSessionRealTotal({
+    agent,
+    sessionId: meta.id,
+    filePath,
+    mtimeMs,
+    usageRealTotal: meta.realTotal,
+  });
+  return {
+    agent,
+    id: meta.id,
+    project: projectSlug,
+    projectPath: meta.cwd ?? decodeProjectSlugForAgent(agent, projectSlug),
+    filePath,
+    mtimeMs,
+    title: meta.title,
+    realTotal,
+    model: meta.model,
+    hasCompaction: meta.hasCompaction,
+  };
+}
+
+function listConcurrencyForAgent(agent: AgentKind): number {
+  return agent === "cursor" || agent === "antigravity" ? ESTIMATE_CONCURRENCY : IO_CONCURRENCY;
+}
+
 export async function listSessions(projectSlug: string, agent: AgentKind = "claude"): Promise<SessionListItem[]> {
   if (agent === "opencode") return listOpenCodeSessions(projectSlug);
+  if (agent === "antigravity") return listAntigravitySessions(projectSlug);
 
   if (agent === "cursor") {
     const projectDir = join(getAgentConfig(agent).sessionsDir, projectSlug);
     const sessionFiles = await listCursorSessionFiles(projectDir);
-    const items = await mapLimit(sessionFiles, IO_CONCURRENCY, async (filePath): Promise<SessionListItem | null> => {
+    const limit = listConcurrencyForAgent(agent);
+    const items = await mapLimit(sessionFiles, limit, async (filePath): Promise<SessionListItem | null> => {
       let st;
       try {
         st = await stat(filePath);
@@ -264,24 +319,13 @@ export async function listSessions(projectSlug: string, agent: AgentKind = "clau
       const id = basename(filePath, ".jsonl");
       try {
         const meta = await indexSessionFile(filePath);
-        return {
-          agent,
-          id: meta.id,
-          project: projectSlug,
-          projectPath: meta.cwd ?? decodeProjectSlugForAgent(agent, projectSlug),
-          filePath,
-          mtimeMs: st.mtimeMs,
-          title: meta.title,
-          realTotal: meta.realTotal,
-          model: meta.model,
-          hasCompaction: meta.hasCompaction,
-        };
+        return buildSessionListItem(agent, projectSlug, filePath, st.mtimeMs, meta);
       } catch {
         return {
           agent,
           id,
           project: projectSlug,
-          projectPath: meta.cwd ?? decodeProjectSlugForAgent(agent, projectSlug),
+          projectPath: decodeProjectSlugForAgent(agent, projectSlug),
           filePath,
           mtimeMs: st.mtimeMs,
           title: "(failed to read)",
@@ -298,9 +342,8 @@ export async function listSessions(projectSlug: string, agent: AgentKind = "clau
 
   const dirPath = join(getAgentConfig(agent).sessionsDir, projectSlug);
   const entries = (await readdir(dirPath)).filter((f) => f.endsWith(".jsonl"));
-  // Index each session file concurrently (bounded) rather than one-at-a-time —
-  // this is the dominant latency when opening a project with many sessions.
-  const items = await mapLimit(entries, IO_CONCURRENCY, async (f): Promise<SessionListItem | null> => {
+  const limit = listConcurrencyForAgent(agent);
+  const items = await mapLimit(entries, limit, async (f): Promise<SessionListItem | null> => {
     const filePath = join(dirPath, f);
     let st;
     try {
@@ -310,18 +353,7 @@ export async function listSessions(projectSlug: string, agent: AgentKind = "clau
     }
     try {
       const meta = await indexSessionFile(filePath);
-      return {
-        agent,
-        id: meta.id,
-        project: projectSlug,
-        projectPath: meta.cwd ?? decodeProjectSlugForAgent(agent, projectSlug),
-        filePath,
-        mtimeMs: st.mtimeMs,
-        title: meta.title,
-        realTotal: meta.realTotal,
-        model: meta.model,
-        hasCompaction: meta.hasCompaction,
-      };
+      return buildSessionListItem(agent, projectSlug, filePath, st.mtimeMs, meta);
     } catch {
       return {
         agent,
@@ -344,6 +376,7 @@ export async function listSessions(projectSlug: string, agent: AgentKind = "clau
 
 export async function findSessionById(sessionId: string, agent: AgentKind = "claude"): Promise<string | null> {
   if (agent === "opencode") return findOpenCodeSessionById(sessionId);
+  if (agent === "antigravity") return findAntigravitySessionById(sessionId);
 
   const sessionsDir = getAgentConfig(agent).sessionsDir;
 
@@ -382,6 +415,14 @@ export async function findSessionMeta(
   let projectSlug = "";
   if (agent === "opencode") {
     projectSlug = parseOpenCodeSessionPath(filePath)?.projectId ?? "";
+  } else if (agent === "antigravity") {
+    const parsed = parseAntigravitySessionPath(filePath);
+    if (parsed?.source === "ide-cli") {
+      projectSlug = parsed.projectSlug;
+    } else {
+      const meta = await indexAntigravitySession(filePath);
+      projectSlug = meta.projectSlug;
+    }
   } else if (agent === "cursor") {
     const parts = filePath.split(/[/\\]/);
     const idx = parts.indexOf("agent-transcripts");

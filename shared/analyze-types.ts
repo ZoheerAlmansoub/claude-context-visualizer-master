@@ -1,6 +1,6 @@
 /** Shared analysis / governance types (no Node deps — safe for web + server). */
 
-export type AgentKind = "claude" | "pi" | "cursor" | "opencode";
+export type AgentKind = "claude" | "pi" | "cursor" | "opencode" | "antigravity";
 
 export type AnalyzeType =
   | "summarize"

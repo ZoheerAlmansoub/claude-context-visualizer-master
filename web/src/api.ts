@@ -1,4 +1,4 @@
-export type AgentKind = "claude" | "pi" | "cursor" | "opencode";
+export type AgentKind = "claude" | "pi" | "cursor" | "opencode" | "antigravity";
 
 export type SessionListItem = {
   agent: AgentKind;

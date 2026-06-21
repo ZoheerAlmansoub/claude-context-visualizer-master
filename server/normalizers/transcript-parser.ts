@@ -192,7 +192,10 @@ export function recordsToTranscript(
         } else if (b?.type === "text") {
           const raw = (b.text as string) ?? "";
           const parsed = parseUserText(raw);
-          const displayText = opts.agent === "cursor" ? parsed.text : stripXmlTags(parsed.text) || parsed.text;
+          const displayText =
+            opts.agent === "cursor" || opts.agent === "antigravity"
+              ? parsed.text
+              : stripXmlTags(parsed.text) || parsed.text;
           conversation.push({
             id: `msg-${msgIndex++}`,
             turn: userTurn,

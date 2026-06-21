@@ -26,6 +26,7 @@ import {
   sessionRowToRealTotal,
 } from "./opencode-db.ts";
 import type { OpenCodeMessageBundle } from "./opencode-db.ts";
+import { resolveAntigravitySessionSourceMtimeMs } from "./antigravity-loader.ts";
 
 const SESSION_JSON = ".json";
 
@@ -510,6 +511,9 @@ export async function findOpenCodeSessionById(sessionId: string, storageDir?: st
 }
 
 export async function resolveSessionSourceMtimeMs(filePath: string, agent: AgentKind): Promise<number> {
+  if (agent === "antigravity") {
+    return resolveAntigravitySessionSourceMtimeMs(filePath);
+  }
   if (agent === "opencode" && isOpenCodeDbSessionPath(filePath)) {
     const sessionId = parseOpenCodeDbSessionPath(filePath);
     const row = sessionId ? findOpenCodeSessionInDb(sessionId) : null;

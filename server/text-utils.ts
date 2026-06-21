@@ -1,6 +1,7 @@
 // Shared text extraction for transcripts and titles.
 
 const USER_QUERY_RE = /<user_query>([\s\S]*?)<\/user_query>/i;
+const USER_REQUEST_RE = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i;
 const TIMESTAMP_RE = /<timestamp>[\s\S]*?<\/timestamp>\s*/gi;
 const XML_TAG_RE = /<\/?[a-z_-]+[^>]*>/gi;
 
@@ -9,6 +10,8 @@ export function stripXmlTags(s: string): string {
 }
 
 export function extractUserQuery(raw: string): string {
+  const userRequest = raw.match(USER_REQUEST_RE);
+  if (userRequest?.[1]?.trim()) return userRequest[1].trim();
   const match = raw.match(USER_QUERY_RE);
   if (match?.[1]?.trim()) return match[1].trim();
   return raw.replace(TIMESTAMP_RE, "").trim();

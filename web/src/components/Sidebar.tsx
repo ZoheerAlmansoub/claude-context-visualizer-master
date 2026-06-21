@@ -16,6 +16,7 @@ const AGENTS: Array<{ id: AgentKind; label: string }> = [
   { id: "pi", label: "Pi" },
   { id: "cursor", label: "Cursor" },
   { id: "opencode", label: "OpenCode" },
+  { id: "antigravity", label: "Antigravity" },
 ];
 
 function fmtTokens(n: number | null): string {
@@ -150,6 +151,7 @@ export function Sidebar({ agent, onAgentChange, selected, onSelect, collapsed, o
               className={agent === a.id ? "active" : ""}
               onClick={() => onAgentChange(a.id)}
               type="button"
+              title={a.label}
             >
               {a.label}
             </button>

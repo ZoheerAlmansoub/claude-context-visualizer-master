@@ -16,6 +16,7 @@ const AGENT_TABS: Array<{ id: AgentKind; label: string }> = [
   { id: "claude", label: "Claude" },
   { id: "pi", label: "Pi" },
   { id: "opencode", label: "OpenCode" },
+  { id: "antigravity", label: "Antigravity" },
 ];
 
 export function ArtifactsPanel({ agent, sessionId, projectPath }: Props) {

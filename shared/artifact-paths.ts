@@ -17,23 +17,28 @@ export function defaultArtifactRelativePath(agent: AgentKind, artifact: Artifact
       if (agent === "cursor") return `~/.cursor/skills/${s}/SKILL.md`;
       if (agent === "claude") return `.claude/skills/${s}/SKILL.md`;
       if (agent === "pi") return `.pi/skills/${s}/SKILL.md`;
+      if (agent === "antigravity") return `.agents/skills/${s}/SKILL.md`;
       return `.opencode/skills/${s}/SKILL.md`;
     case "rule":
       if (agent === "cursor") return `.cursor/rules/${s}.mdc`;
       if (agent === "claude") return `.claude/rules/${s}.md`;
       if (agent === "pi") return `.pi/rules/${s}.md`;
+      if (agent === "antigravity") return `.agents/rules/${s}.md`;
       return `.opencode/rules/${s}.md`;
     case "hook":
       if (agent === "cursor") return `.cursor/hooks/${s}.md`;
       if (agent === "claude") return `.claude/hooks/${s}.md`;
+      if (agent === "antigravity") return `.agent/workflows/${s}.md`;
       return `docs/hooks/${s}.md`;
     case "subagent":
       if (agent === "cursor") return `.cursor/agents/${s}.md`;
+      if (agent === "antigravity") return `.agents/skills/${s}/SKILL.md`;
       return `docs/agents/${s}.md`;
     case "tool-hint":
       if (agent === "cursor") return `.cursor/rules/tool-hints/${s}.mdc`;
       if (agent === "claude") return `.claude/rules/tool-hints/${s}.md`;
       if (agent === "pi") return `.pi/rules/tool-hints/${s}.md`;
+      if (agent === "antigravity") return `.agents/rules/tool-hints/${s}.md`;
       return `.opencode/rules/tool-hints/${s}.md`;
     default:
       return `docs/agent-hints/${s}.md`;
@@ -58,6 +63,8 @@ export function agentArtifactPathHints(agent: AgentKind): string {
       return "Pi: AGENTS.md, .pi/skills/*/SKILL.md, .pi/rules/*.md, docs/hooks/*.md";
     case "opencode":
       return "OpenCode: AGENTS.md, .opencode/rules/*.md, .opencode/skills/*/SKILL.md, docs/hooks/*.md";
+    case "antigravity":
+      return "Antigravity: GEMINI.md, AGENTS.md, .agents/rules/*.md, ~/.gemini/GEMINI.md, ~/.gemini/antigravity/skills/*/SKILL.md";
     default:
       return "Universal: AGENTS.md, design.md, docs/context/*.md";
   }
