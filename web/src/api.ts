@@ -457,6 +457,24 @@ export type LlmTestResult = {
   error?: string;
 };
 
+export type { LlmModelInfo, ModelSortBy, ModelFilters } from "@shared/llm-model-info.ts";
+
+export type LlmModelsResult = {
+  ok: boolean;
+  provider: LlmProviderKind;
+  models: import("@shared/llm-model-info.ts").LlmModelInfo[];
+  latencyMs: number;
+  cached?: boolean;
+  error?: string;
+};
+
+export type LlmModelEnrichResult = {
+  ok: boolean;
+  provider: LlmProviderKind;
+  model: Partial<import("@shared/llm-model-info.ts").LlmModelInfo>;
+  error?: string;
+};
+
 export const UNCHANGED_KEY_SENTINEL = "__UNCHANGED__";
 
 async function put<T>(url: string, body: unknown): Promise<T> {
@@ -521,6 +539,15 @@ export const api = {
     provider: LlmProviderKind,
     overrides?: { apiKey?: string; baseUrl?: string; apiUrl?: string; model?: string },
   ) => post<LlmTestResult>("/api/config/llm/test", { provider, ...overrides }),
+  listLlmModels: (
+    provider: LlmProviderKind,
+    overrides?: { apiKey?: string; baseUrl?: string; apiUrl?: string },
+  ) => post<LlmModelsResult>("/api/config/llm/models", { provider, ...overrides }),
+  enrichLlmModel: (
+    provider: LlmProviderKind,
+    modelId: string,
+    overrides?: { apiKey?: string; baseUrl?: string; apiUrl?: string },
+  ) => post<LlmModelEnrichResult>("/api/config/llm/models/enrich", { provider, modelId, ...overrides }),
   analyze: (
     agent: AgentKind,
     sessionId: string,

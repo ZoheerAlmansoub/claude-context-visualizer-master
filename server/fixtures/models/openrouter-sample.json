@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "id": "google/gemini-2.0-flash-exp:free",
+      "name": "Gemini 2.0 Flash Exp (free)",
+      "description": "Free experimental flash model",
+      "context_length": 1048576,
+      "pricing": { "prompt": "0", "completion": "0" },
+      "architecture": {
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "modality": "text+image->text"
+      },
+      "supported_parameters": ["tools", "temperature"]
+    },
+    {
+      "id": "openai/gpt-4o",
+      "name": "GPT-4o",
+      "description": "OpenAI flagship multimodal",
+      "context_length": 128000,
+      "pricing": { "prompt": "0.0000025", "completion": "0.00001" },
+      "architecture": {
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "modality": "text+image->text"
+      },
+      "supported_parameters": ["tools"],
+      "expiration_date": "2026-12-01T00:00:00Z"
+    }
+  ]
+}

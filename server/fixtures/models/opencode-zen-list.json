@@ -1,0 +1,10 @@
+{
+  "object": "list",
+  "data": [
+    { "id": "big-pickle", "object": "model", "created": 1782074947, "owned_by": "opencode" },
+    { "id": "claude-fable-5", "object": "model", "created": 1782074947, "owned_by": "opencode" },
+    { "id": "claude-opus-4-6", "object": "model", "created": 1782074947, "owned_by": "opencode" },
+    { "id": "deepseek-v4-flash-free", "object": "model", "created": 1782074947, "owned_by": "opencode" },
+    { "id": "gemini-3-flash", "object": "model", "created": 1782074947, "owned_by": "opencode" }
+  ]
+}

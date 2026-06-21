@@ -11,6 +11,7 @@ import {
   type LlmSettingsPatch,
 } from "./llm-config-store.ts";
 import { testLlmConnection } from "./llm/test-connection.ts";
+import { listLlmModels, enrichLlmModel, invalidateModelCatalogCache } from "./llm/list-models.ts";
 import { runAnalysis, listSessionAnalyses, getSessionAnalysis } from "./analysis.ts";
 import { improveUserPrompt, listPromptImprovements } from "./prompt-improvement.ts";
 import { generateArtifacts } from "./artifacts/generator.ts";
@@ -111,6 +112,7 @@ const server = Bun.serve({
       if (path === "/api/config/llm/settings" && req.method === "PUT") {
         const body = await readJsonBody(req);
         const view = updateLlmSettings(body as LlmSettingsPatch);
+        invalidateModelCatalogCache();
         return json({ ok: true, settings: view, public: getPublicLlmConfig() });
       }
 
@@ -123,6 +125,34 @@ const server = Bun.serve({
           baseUrl: body.baseUrl as string | undefined,
           apiUrl: body.apiUrl as string | undefined,
           model: body.model as string | undefined,
+        });
+        return json(result);
+      }
+
+      if (path === "/api/config/llm/models" && req.method === "POST") {
+        const body = await readJsonBody(req);
+        const provider = body.provider as LlmProviderKind | undefined;
+        if (!provider) return badRequest("provider required");
+        const result = await listLlmModels(provider, {
+          apiKey: body.apiKey as string | undefined,
+          baseUrl: body.baseUrl as string | undefined,
+          apiUrl: body.apiUrl as string | undefined,
+        }, {
+          enrichOllama: body.enrichOllama !== false,
+        });
+        return json(result);
+      }
+
+      if (path === "/api/config/llm/models/enrich" && req.method === "POST") {
+        const body = await readJsonBody(req);
+        const provider = body.provider as LlmProviderKind | undefined;
+        const modelId = body.modelId as string | undefined;
+        if (!provider) return badRequest("provider required");
+        if (!modelId?.trim()) return badRequest("modelId required");
+        const result = await enrichLlmModel(provider, modelId.trim(), {
+          apiKey: body.apiKey as string | undefined,
+          baseUrl: body.baseUrl as string | undefined,
+          apiUrl: body.apiUrl as string | undefined,
         });
         return json(result);
       }

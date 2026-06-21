@@ -1,0 +1,7 @@
+{
+  "data": [
+    { "id": "gpt-4o-mini", "owned_by": "openai" },
+    { "id": "text-embedding-3-small", "owned_by": "openai" },
+    { "id": "whisper-1", "owned_by": "openai" }
+  ]
+}
