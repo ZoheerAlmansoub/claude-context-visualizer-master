@@ -20,5 +20,8 @@ secrets.json
 .playwright-mcp
 .claude/settings.local.json
 
+# Local personal notes (not part of the project)
+.local/
+
 # Local-only purge helper (contains leaked literals for history rewrite)
 scripts/purge-secrets-replacements.txt

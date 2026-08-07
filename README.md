@@ -1,8 +1,8 @@
 # Agent Session Intelligence
 
-A **local-first** web app for **agent session analysis**: context token breakdown, user message aggregation, AI-powered analysis, skill/rule extraction, recurring problem detection, and project governance.
+A local web app for **agent session analysis**: context token breakdown, user message aggregation, AI-powered analysis, skill/rule extraction, and recurring problem detection.
 
-> **الدليل العربي الشامل:** [docs/GUIDE-ar.md](./docs/GUIDE-ar.md)
+> **الدليل العربي:** [docs/GUIDE-ar.md](./docs/GUIDE-ar.md)
 
 Supported transcript sources:
 
