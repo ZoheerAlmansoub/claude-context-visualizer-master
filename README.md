@@ -9,6 +9,8 @@ Local-first web app to **visualize and analyze agent sessions** from Claude Code
 
 Session data stays on your machine. Nothing is uploaded except LLM API calls you configure for Analysis and Governance.
 
+![Agent Session Intelligence — welcome screen](./docs/screenshots/welcome.png)
+
 **Supported transcript sources:**
 
 - **Claude Code:** `~/.claude/projects/**/*.jsonl`
