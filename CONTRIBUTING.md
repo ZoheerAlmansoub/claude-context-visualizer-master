@@ -53,7 +53,7 @@ Windows: `.\start.ps1`
 
 ## Community
 
-- Be respectful and constructive
+- Be respectful and constructive — see [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 
 ## License
 

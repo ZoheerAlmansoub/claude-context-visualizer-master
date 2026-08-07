@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest an improvement or new capability
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: Describe the workflow problem first — what are you trying to accomplish with agent sessions?
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      placeholder: e.g. After compaction I lose track of open tasks...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional — other tools or workarounds you tried.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Context / tokens
+        - Analysis / LLM
+        - Governance / artifacts
+        - Transcript loader
+        - UI / UX
+        - Other
