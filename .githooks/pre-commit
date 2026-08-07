@@ -1,0 +1,8 @@
+#!/bin/sh
+# Pre-commit hook: block commits that contain API keys or secrets.
+set -e
+if command -v bun >/dev/null 2>&1; then
+  bun scripts/check-secrets.ts --staged
+else
+  echo "Warning: bun not found; skipping secret scan. Install Bun and run: bun run check:secrets"
+fi

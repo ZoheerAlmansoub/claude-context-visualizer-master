@@ -5,6 +5,20 @@ web/dist
 *.tsbuildinfo
 *.log
 .DS_Store
+
+# Secrets — never commit
 .env
+.env.local
+.env.*.local
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+secrets.json
+
 .playwright-mcp
 .claude/settings.local.json
+
+
+
