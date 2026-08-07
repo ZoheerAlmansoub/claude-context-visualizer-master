@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/ZoheerAlmansoub/claude-context-visualizer-master#readme
+    about: Read the README and Arabic guide before opening an issue.
+  - name: Security
+    url: https://github.com/ZoheerAlmansoub/claude-context-visualizer-master/blob/main/SECURITY.md
+    about: Report security issues privately — do not paste API keys in public issues.

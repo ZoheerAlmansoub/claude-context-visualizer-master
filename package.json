@@ -2,8 +2,27 @@
   "name": "claude-context-visualizer",
   "private": true,
   "version": "0.1.0",
-  "description": "Local web app to visualize what's filling the context window of a Claude Code session.",
+  "description": "Local-first web app to visualize and analyze Claude Code, Cursor, Pi, and OpenCode agent sessions.",
   "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ZoheerAlmansoub/claude-context-visualizer-master.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ZoheerAlmansoub/claude-context-visualizer-master/issues"
+  },
+  "homepage": "https://github.com/ZoheerAlmansoub/claude-context-visualizer-master#readme",
+  "keywords": [
+    "claude-code",
+    "cursor",
+    "opencode",
+    "agent",
+    "context-window",
+    "token-analysis",
+    "llm",
+    "governance",
+    "developer-tools"
+  ],
   "scripts": {
     "dev": "bun run dev:server & bun run dev:web",
     "dev:server": "bun --watch server/index.ts",
@@ -11,6 +30,7 @@
     "build:web": "cd web && bun run build",
     "start": "bun server/index.ts",
     "start:app": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start.ps1",
+    "test": "bun test",
     "check:secrets": "bun scripts/check-secrets.ts",
     "hooks:install": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/install-git-hooks.ps1"
   },

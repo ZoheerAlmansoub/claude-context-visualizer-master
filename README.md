@@ -1,199 +1,126 @@
 # Agent Session Intelligence
 
-A local web app for **agent session analysis**: context token breakdown, user message aggregation, AI-powered analysis, skill/rule extraction, and recurring problem detection.
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](./LICENSE)
+[![CI](https://github.com/ZoheerAlmansoub/claude-context-visualizer-master/actions/workflows/ci.yml/badge.svg)](https://github.com/ZoheerAlmansoub/claude-context-visualizer-master/actions/workflows/ci.yml)
+
+Local-first web app to **visualize and analyze agent sessions** from Claude Code, Cursor, Pi, and OpenCode: context token breakdown, LLM-powered insights, governance pipelines, and skills/rules generation.
 
 > **الدليل العربي:** [docs/GUIDE-ar.md](./docs/GUIDE-ar.md)
 
-Supported transcript sources:
+Session data stays on your machine. Nothing is uploaded except LLM API calls you configure for Analysis and Governance.
+
+**Supported transcript sources:**
 
 - **Claude Code:** `~/.claude/projects/**/*.jsonl`
 - **Pi:** `~/.pi/agent/sessions/**/*.jsonl`
 - **Cursor:** `~/.cursor/projects/*/agent-transcripts/*/*.jsonl`
-- **OpenCode:** full transcripts from `~/.local/share/opencode/opencode.db` (SQLite, primary) or legacy `storage/message/` + `storage/part/` JSON files
-
-All session data is read from your machine. Nothing is uploaded to a cloud service except LLM API calls you configure for Analysis/Governance.
-
----
-
-## Requirements
-
-- [Bun](https://bun.sh) — API server and web tooling
-- Windows: PowerShell for `start.ps1` (optional)
+- **OpenCode:** `~/.local/share/opencode/opencode.db` (SQLite) or legacy JSON storage
 
 ---
 
 ## Quick start
 
-```sh
-bun install
-cd web && bun install && cd ..
-
-# Local secrets only — never commit .env
-cp .env.example .env
-
-# Recommended: block accidental secret commits
-bun run hooks:install   # Windows: .\scripts\install-git-hooks.ps1
-bun run check:secrets   # verify before push
-```
-
-### Run
-
-**Windows:**
-
-```powershell
-.\start.ps1
-```
-
-**CLI:**
+**Requirements:** [Bun](https://bun.sh)
 
 ```sh
+git clone https://github.com/ZoheerAlmansoub/claude-context-visualizer-master.git
+cd claude-context-visualizer-master
+bun install && cd web && bun install && cd ..
+cp .env.example .env   # optional — for Analysis tab
 bun run dev
 ```
 
-- UI: http://localhost:5173  
-- API: http://localhost:5174  
+| Platform | Command |
+|----------|---------|
+| Windows | `.\start.ps1` |
+| API + UI | http://localhost:5174 · http://localhost:5173 |
+
+```sh
+bun run hooks:install   # optional pre-commit secret scan
+bun test                # run unit tests
+```
 
 ---
 
-## What the app does
+## Features
 
-### Context tab
+### Context
 
-Visualize **what fills the context window**:
+Treemap, sunburst, and bar charts with drill-down into user messages, tool calls, tool results, attachments, and thinking. Headline stats for input/output, cache read/write, and compaction boundaries.
 
-- Treemap, sunburst, and bar charts
-- Drill-down into heaviest buckets (user messages, tool calls, tool results, attachments, thinking)
-- Headline token stats: input, output, cache read/write, compaction boundaries
-- Local token estimation (`cl100k_base`) with optional calibration from API usage
+### Messages
 
-Use this when context compacts too early or you need to find the largest context consumers.
+Chronological user messages with turn numbers. Copy one or all. Post-compaction filter.
 
-### Messages tab
+### Analysis (LLM)
 
-- Chronological **user messages** with turn numbers
-- Copy one message or all (markdown or plain text)
-- Post-compaction filter
+19 analysis types across six categories — token audit, loop diagnosis, compaction recovery, artifact blueprints, memory drafts, and more. **Analysis Pipeline Wizard** with optional Apply Pack.
 
-Use this to review what you actually asked without wading through assistant/tool noise.
+Configure providers in `.env` or **Settings → LLM** (live reload, saved locally in `.cache/`).
 
-### Analysis tab (requires LLM)
+### Governance
 
-Configure keys in `.env` or **Settings → LLM** (saved to `.cache/llm-settings.json`, live reload, never committed).
+Session and project pipelines (Quick / Standard / Full). Reads `AGENTS.md`, `CLAUDE.md`, rules, and skills from disk. Background runs with cancel/resume. Export playbook to `docs/governance/`.
 
-**19 analysis types** in six categories:
+### Artifacts & Insights
 
-| Category | Types |
-|----------|-------|
-| Overview | summarize, intent map, experience extract, session review |
-| Context & tokens | token audit, compaction recovery |
-| Loops & tools | loop diagnosis, tool hardening, MCP tool audit |
-| Artifacts & memory | artifact blueprint, memory file drafts, agent orchestration |
-| Governance | project health, user AI fluency, growth plan, memory diff, rule dedup, project synthesis |
-| Learning | agentic lessons |
-
-The **Analysis Pipeline Wizard** runs a guided sequence (summarize → token audit → loop diagnosis → artifact blueprint → memory drafts) with optional **Apply Pack** at the end.
-
-Structured types return JSON rendered as cards with copy/save actions.
-
-### Governance tab
-
-- Session and **project pipelines** (Quick / Standard / Full)
-- Reads existing `AGENTS.md`, `CLAUDE.md`, rules, and skills from the session project
-- Multi-agent artifact paths (Cursor, Claude Code, Pi, OpenCode)
-- Background pipelines with cancel/resume; cache under `.cache/pipeline/`
-- Optional auto-apply for high/medium confidence artifacts
-- Export project playbook to `docs/governance/`
-
-### Artifacts tab
-
-Generate **skills**, **rules**, hooks, and sub-agent specs from session patterns. Pattern-linked templates for retry loops, tool errors, token waste, and compaction pressure. **Apply Pack** batches selected items to disk with merge support for memory files.
-
-### Insights tab
-
-Session-level pattern detection and project-wide recurring patterns with suggested artifact templates.
+Generate skills, rules, hooks, and sub-agent specs. Detect retry loops, tool errors, and token waste across sessions.
 
 ---
 
 ## LLM providers
 
-Supported: **Anthropic**, **OpenAI**, **OpenRouter**, **OpenCode Zen**, **Groq**, **DeepSeek**, **Ollama**, **NVIDIA NIM**.
+Anthropic · OpenAI · OpenRouter · OpenCode Zen · Groq · DeepSeek · Ollama · NVIDIA NIM
 
-Example `.env` (local file only):
-
-```env
-ANTHROPIC_API_KEY=
-OPENROUTER_API_KEY=
-NVIDIA_API_KEY=
-DEFAULT_LLM_PROVIDER=anthropic
-DEFAULT_LLM_MODEL=claude-sonnet-4-20250514
-OLLAMA_BASE_URL=http://localhost:11434
-LLM_FETCH_TIMEOUT_MS=1200000
-```
-
-See [.env.example](./.env.example) for all variables.
+See [.env.example](./.env.example) for configuration.
 
 ---
 
-## Security — API keys
+## Security
 
-**Never commit real API keys.** Use `.env` locally or in-app LLM settings.
-
-| File | Safe to commit? |
-|------|-----------------|
-| `.env` | No (gitignored) |
-| `.cache/` | No (gitignored) |
-| `.env.example` | Yes — empty placeholders only |
+Never commit API keys. Use `.env` locally or in-app settings.
 
 ```sh
-bun run check:secrets      # scan tracked files
-bun run hooks:install      # pre-commit hook
+bun run check:secrets
 ```
 
-Full rotation and history purge steps: [SECURITY.md](./SECURITY.md)
+Details: [SECURITY.md](./SECURITY.md)
 
 ---
 
-## API reference
+## API
 
 | Route | Description |
 |-------|-------------|
 | `GET /api/health` | Health check |
-| `GET /api/sessions/:id/transcript` | Full session transcript |
-| `GET /api/sessions/:id/user-messages` | Aggregated user messages |
-| `POST /api/sessions/:id/analyze` | LLM analysis (19 types) |
-| `POST /api/sessions/:id/generate-artifacts` | Skills/rules generation |
-| `GET /api/sessions/:id/insights` | Session patterns |
-| `GET /api/insights/recurring?project=` | Cross-session patterns |
-| `GET /api/projects/:slug/context` | Project memory/rules on disk |
-| `GET /api/projects/:slug/dashboard` | Project stats, patterns, schedule |
-| `POST /api/sessions/:id/govern` | Session governance pipeline |
-| `POST /api/projects/:slug/govern` | Project governance pipeline |
-| `GET /api/governance/:pipelineId` | Poll pipeline status |
-| `POST /api/artifacts/apply-pack` | Batch apply artifacts |
+| `GET /api/sessions/:id/transcript` | Full transcript |
+| `POST /api/sessions/:id/analyze` | LLM analysis |
+| `POST /api/sessions/:id/govern` | Session governance |
+| `POST /api/projects/:slug/govern` | Project governance |
 | `GET /api/config/llm` | Provider config (no secrets) |
 
----
-
-## Project layout
-
-```
-server/     — Bun HTTP API, transcript engine, LLM, insights, governance
-web/        — React + Vite frontend
-scripts/    — smoke tests, secret scanning, hook installer
-docs/       — roadmap, Arabic guide
-.cache/     — LLM settings, pipeline cache (local, gitignored)
-```
-
-Further API and roadmap detail: [docs/AGENT-INTELLIGENCE-ROADMAP.md](./docs/AGENT-INTELLIGENCE-ROADMAP.md)
+Full reference: [docs/AGENT-INTELLIGENCE-ROADMAP.md](./docs/AGENT-INTELLIGENCE-ROADMAP.md)
 
 ---
 
-## Common workflows
+## Project structure
 
-1. **Context fills too fast** → Context → token audit → compaction recovery  
-2. **Agent stuck in a loop** → Insights → loop diagnosis → tool hardening → save rule  
-3. **Extract skills from a session** → Analysis wizard → Artifacts → Apply Pack  
-4. **Review whole project** → Project Dashboard → Govern (Standard/Full)
+```
+server/   Bun API, transcript engine, LLM, governance
+web/      React + Vite UI
+docs/     Roadmap, Arabic guide
+scripts/  Tests, secret scanning
+```
+
+---
+
+## Contributing
+
+Contributions welcome — bug reports, transcript parsers, analysis improvements, and docs.
+
+- [CONTRIBUTING.md](./CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
