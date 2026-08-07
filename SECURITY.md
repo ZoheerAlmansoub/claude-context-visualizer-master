@@ -49,20 +49,8 @@ If real keys appeared in `.env.example` or any tracked file on GitHub:
    - [NVIDIA NIM](https://build.nvidia.com/)
    - Others as applicable
 2. Put new keys only in `.env` or the in-app LLM settings.
-3. Purge secrets from git history (required — deleting the key in a new commit is not enough):
-
-```sh
-
-
-#   <exact-leaked-string>==><replacement>
-# Use empty replacement to delete the secret from all commits:
-#   sk-or-v1-your-leaked-key==>
-
-
-git push --force-with-lease origin main
-```
-
-4. Re-clone or `git fetch --all && git reset --hard origin/main` on other machines.
+3. If keys were ever pushed to a public remote, treat them as compromised even after removal from the latest commit.
+4. Re-clone or `git fetch --all && git reset --hard origin/main` on other machines after any history cleanup on the remote.
 
 ## Reporting
 
